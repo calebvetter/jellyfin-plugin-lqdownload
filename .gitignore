@@ -3,3 +3,10 @@ obj/
 .vs/
 .idea/
 artifacts
+
+/.vscode/
+/.editorconfig
+/build.yaml
+/Directory.Build.props
+/jellyfin.ruleset
+/omnisharp.json
