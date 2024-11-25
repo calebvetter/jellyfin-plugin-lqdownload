@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>LQ Download</title>
+	</head>
+	<body>
+		<div id="LQDownloadConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+			<div data-role="content">
+				<div class="content-primary">
+					<form id="LQDownloadConfigForm">
+						<div class="selectContainer">
+							<label class="selectLabel" for="Resolution">Select Resolution</label>
+							<select is="emby-select" id="Resolution" name="Resolution" class="emby-select-withcolor emby-select">
+								<option id="optResolution1080p" value="Resolution1080p">Resolution1080p</option>
+								<option id="optResolution720p" value="Resolution720p">Resolution720p</option>
+								<option id="optResolution480p" value="Resolution480p">Resolution480p</option>
+							</select>
+						</div>
+						<div class="inputContainer">
+							<label class="inputLabel inputLabelUnfocused" for="MaxBitrate">Max Bitrate (kbps)</label>
+							<input id="MaxBitrate" name="MaxBitrate" type="number" is="emby-input" min="0" />
+							<div class="fieldDescription">Recommended: 4000 kbps for Resolution1080p, 2500 kbps for Resolution720p, 1000 kbps for Resolution480p</div>
+						</div>
+						<div>
+							<button is="emby-button" type="submit" class="raised button-submit block emby-button">
+								<span>Save</span>
+							</button>
+						</div>
+					</form>
+				</div>
+			</div>
+			<script type="text/javascript">
+				var LQDownloadConfig = {
+					pluginUniqueId: "8cdb7e71-66fc-42e1-b821-c37cab2451b6",
+				};
+
+				document.querySelector("#LQDownloadConfigPage").addEventListener("pageshow", function () {
+					Dashboard.showLoadingMsg();
+					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
+						document.querySelector("#Resolution").value = config.Resolution || "Resolution1080p";
+						document.querySelector("#MaxBitrate").value = config.MaxBitrate || 4000;
+						Dashboard.hideLoadingMsg();
+					});
+				});
+
+				document.querySelector("#LQDownloadConfigForm").addEventListener("submit", function (e) {
+					e.preventDefault();
+					let maxBitrate = document.querySelector("#MaxBitrate").value;
+					if (maxBitrate < 0) {
+						alert("Max Bitrate must be a positive value.");
+						return false;
+					}
+
+					Dashboard.showLoadingMsg();
+					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
+						config.Resolution = document.querySelector("#Resolution").value;
+						config.MaxBitrate = maxBitrate;
+						ApiClient.updatePluginConfiguration(LQDownloadConfig.pluginUniqueId, config).then(function (result) {
+							Dashboard.processPluginConfigurationUpdateResult(result);
+						});
+					});
+
+					return false;
+				});
+			</script>
+		</div>
+	</body>
+</html>
