@@ -55,7 +55,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	// }
 
 	// Initialize the TranscodingHandler
-	_transcodingHandler = new TranscodingHandler(libraryManager, logger, mediaEncoder);
+	_transcodingHandler = new TranscodingHandler(libraryManager, logger);
 	_transcodingHandler.Initialize();
   }
 
