@@ -16,7 +16,7 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// <summary>
 		/// Gets or sets the maximum bitrate for the transcoded video.
 		/// </summary>
-		public int MaxBitrate { get; set; }
+		public int TargetBitrate { get; set; }
 
 		/// <summary>
 		/// Gets or sets the audio codec for the transcoded video.

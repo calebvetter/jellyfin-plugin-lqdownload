@@ -5,10 +5,10 @@
 		<title>LQ Download</title>
 	</head>
 	<body>
-		<div id="LQDownloadConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+		<div data-role="page" class="page type-interior pluginConfigurationPage LQDownloadConfigPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
 			<div data-role="content">
 				<div class="content-primary">
-					<form id="LQDownloadConfigForm">
+					<form class="LQDownloadConfigForm">
 						<div class="selectContainer">
 							<label class="selectLabel" for="Resolution">Select Resolution</label>
 							<select is="emby-select" id="Resolution" name="Resolution" class="emby-select-withcolor emby-select">
@@ -35,30 +35,37 @@
 					pluginUniqueId: "8cdb7e71-66fc-42e1-b821-c37cab2451b6",
 				};
 
-				document.querySelector("#LQDownloadConfigPage").addEventListener("pageshow", function () {
+				var DEFAULT_RESOLUTION = "Resolution1080p";
+				var DEFAULT_MAXBITRATE = 4000;
+
+				$(".LQDownloadConfigPage").on("pageshow", function () {
 					Dashboard.showLoadingMsg();
+					var page = this;
 					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
-						document.querySelector("#Resolution").value = config.Resolution || "Resolution1080p";
-						document.querySelector("#MaxBitrate").value = config.MaxBitrate || 4000;
+						console.log("LQDOWNLOAD: config", config);
+						console.log("LQDOWNLOAD: #Resolution", page.querySelector("#Resolution"));
+						console.log("LQDOWNLOAD: #MaxBitrate", page.querySelector("#MaxBitrate"));
+						$("#Resolution", page)
+							.val(config.Resolution || DEFAULT_RESOLUTION)
+							.change();
+						$("#MaxBitrate", page)
+							.val(config.MaxBitrate || DEFAULT_MAXBITRATE)
+							.change();
 						Dashboard.hideLoadingMsg();
 					});
 				});
 
-				document.querySelector("#LQDownloadConfigForm").addEventListener("submit", function (e) {
-					e.preventDefault();
-					let maxBitrate = document.querySelector("#MaxBitrate").value;
-					if (maxBitrate < 0) {
-						alert("Max Bitrate must be a positive value.");
-						return false;
-					}
-
+				$(".LQDownloadConfigForm").on("submit", function () {
 					Dashboard.showLoadingMsg();
+					var form = this;
+
+					let maxBitrate = $("#MaxBitrate").val();
+					if (maxBitrate < 0) maxBitrate = DEFAULT_MAXBITRATE;
+
 					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
-						config.Resolution = document.querySelector("#Resolution").value;
+						config.Resolution = $("#Resolution", form).val();
 						config.MaxBitrate = maxBitrate;
-						ApiClient.updatePluginConfiguration(LQDownloadConfig.pluginUniqueId, config).then(function (result) {
-							Dashboard.processPluginConfigurationUpdateResult(result);
-						});
+						ApiClient.updatePluginConfiguration(LQDownloadConfig.pluginUniqueId, config).then(Dashboard.processPluginConfigurationUpdateResult);
 					});
 
 					return false;
