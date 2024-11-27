@@ -1,11 +1,15 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using Jellyfin.Plugin.LQDownload.Api;
 using Jellyfin.Plugin.LQDownload.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LQDownload;
@@ -15,6 +19,7 @@ namespace Jellyfin.Plugin.LQDownload;
 /// </summary>
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable {
 	private readonly TranscodingHandler _transcodingHandler;
+	private readonly ConcurrentDictionary<Guid, (Video Video, double Progress)> _transcodingStatus = new();
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -24,7 +29,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	/// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
 	/// <param name="logger">Instance of the <see cref="ILogger"/> interface.</param>
 	public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer, ILibraryManager libraryManager, ILogger<TranscodingHandler> logger)
-					: base(applicationPaths, xmlSerializer) {
+			: base(applicationPaths, xmlSerializer) {
 		Instance = this;
 
 		// Initialize the TranscodingHandler
@@ -43,6 +48,29 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	/// </summary>
 	public static Plugin? Instance { get; private set; }
 
+	/// <summary>
+	/// Gets the transcoding status for the plugin.
+	/// </summary>
+	public IReadOnlyDictionary<Guid, (Video Video, double Progress)> TranscodingStatus => _transcodingStatus;
+
+	/// <summary>
+	/// Adds or updates the transcoding status for a video.
+	/// </summary>
+	/// <param name="videoId">The unique identifier for the video.</param>
+	/// <param name="video">The video object.</param>
+	/// <param name="progress">The progress of transcoding as a percentage.</param>
+	public void UpdateTranscodingStatus(Guid videoId, Video video, double progress) {
+		_transcodingStatus[videoId] = (video, progress);
+	}
+
+	/// <summary>
+	/// Removes the transcoding status for a video.
+	/// </summary>
+	/// <param name="videoId">The unique identifier for the video to be removed.</param>
+	public void RemoveTranscodingStatus(Guid videoId) {
+		_transcodingStatus.TryRemove(videoId, out _);
+	}
+
 	/// <inheritdoc />
 	public IEnumerable<PluginPageInfo> GetPages() {
 		return new[] {
@@ -51,6 +79,15 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 				EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html"
 			}
 		};
+	}
+
+	/// <summary>
+	/// Register services in the dependency injection container.
+	/// </summary>
+	/// <param name="serviceCollection">The service collection.</param>
+	public static void Load(IServiceCollection serviceCollection) {
+		serviceCollection.AddSingleton<TranscodingHandler>();
+		serviceCollection.AddSingleton<TranscodingStatusController>();
 	}
 
 	/// <summary>
