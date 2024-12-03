@@ -1,0 +1,9 @@
+{
+	"compilerOptions": {
+		"module": "commonjs",
+		"target": "es6",
+		"strict": true,
+		"noEmitOnError": true
+	},
+	"include": ["Jellyfin.Plugin.LQDownload/Web/**/*"]
+}
