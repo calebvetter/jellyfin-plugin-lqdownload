@@ -9,19 +9,41 @@
 			<div data-role="content">
 				<div class="content-primary">
 					<form class="LQDownloadConfigForm">
+						<div class="checkboxContainer checkboxContainer-withDescription">
+							<label class="emby-checkbox-label" for="EncodeOnImport">
+								<input id="EncodeOnImport" name="EncodeOnImport" type="checkbox" class="emby-checkbox" is="emby-checkbox" />
+								<span class="checkboxLabel">Encode on Import</span>
+								<span class="checkboxOutline"><span class="material-icons checkboxIcon checkboxIcon-checked check" aria-hidden="true"></span><span class="material-icons checkboxIcon checkboxIcon-unchecked" aria-hidden="true"></span></span>
+							</label>
+							<div class="fieldDescription checkboxFieldDescription">Encode new imported media automatically.</div>
+						</div>
+
 						<div class="selectContainer">
-							<label class="selectLabel" for="Resolution">Select Resolution</label>
+							<label class="selectLabel" for="Resolution">Max Resolution</label>
 							<select is="emby-select" id="Resolution" name="Resolution" class="emby-select-withcolor emby-select">
 								<option id="optResolution1080p" value="Resolution1080p">Resolution1080p</option>
 								<option id="optResolution720p" value="Resolution720p">Resolution720p</option>
 								<option id="optResolution480p" value="Resolution480p">Resolution480p</option>
 							</select>
+							<div class="selectArrowContainer">
+								<div style="visibility: hidden; display: none">0</div>
+								<span class="selectArrow material-icons keyboard_arrow_down" aria-hidden="true"></span>
+							</div>
+							<div class="fieldDescription">Resolutions higher than this setting will always be transcoded.</div>
 						</div>
+
+						<div class="inputContainer">
+							<label class="inputLabel inputLabel-float inputLabelUnfocused" for="TargetBitrate">Target Bitrate (kbps)</label>
+							<input type="number" id="TargetBitrate" pattern="[0-9]*" required="" min="0" class="emby-input" />
+							<div class="fieldDescription">Transcodes will use this bitrate. Recommended: 4000 kbps for Resolution1080p, 2500 kbps for Resolution720p, 1000 kbps for Resolution480p</div>
+						</div>
+
 						<div class="inputContainer">
 							<label class="inputLabel inputLabelUnfocused" for="MaxBitrate">Max Bitrate (kbps)</label>
-							<input id="MaxBitrate" name="MaxBitrate" type="number" is="emby-input" min="0" />
-							<div class="fieldDescription">Recommended: 4000 kbps for Resolution1080p, 2500 kbps for Resolution720p, 1000 kbps for Resolution480p</div>
+							<input type="number" id="MaxBitrate" pattern="[0-9]*" required="" min="0" class="emby-input" />
+							<div class="fieldDescription">If original media bitrate is lower than this setting, no transcode will happen. Recommended: 50% higher than Target Bitrate.</div>
 						</div>
+
 						<div>
 							<button is="emby-button" type="submit" class="raised button-submit block emby-button">
 								<span>Save</span>
@@ -35,36 +57,45 @@
 					pluginUniqueId: "8cdb7e71-66fc-42e1-b821-c37cab2451b6",
 				};
 
+				var DEFAULT_ENCODE_ON_IMPORT = true;
 				var DEFAULT_RESOLUTION = "Resolution1080p";
-				var DEFAULT_MAXBITRATE = 4000;
+				var DEFAULT_TARGET_BITRATE = 4000;
+				var DEFAULT_MAX_BITRATE = 6000;
 
 				$(".LQDownloadConfigPage").on("pageshow", function () {
 					Dashboard.showLoadingMsg();
 					var page = this;
+
 					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
-						console.log("LQDOWNLOAD: config", config);
-						console.log("LQDOWNLOAD: #Resolution", page.querySelector("#Resolution"));
-						console.log("LQDOWNLOAD: #MaxBitrate", page.querySelector("#MaxBitrate"));
+						$("#EncodeOnImport", page)
+							.prop("checked", config.EncodeOnImport != null ? config.EncodeOnImport : DEFAULT_ENCODE_ON_IMPORT)
+							.change();
 						$("#Resolution", page)
 							.val(config.Resolution || DEFAULT_RESOLUTION)
 							.change();
+						$("#TargetBitrate", page)
+							.val(config.TargetBitrate || DEFAULT_TARGET_BITRATE)
+							.change();
 						$("#MaxBitrate", page)
-							.val(config.MaxBitrate || DEFAULT_MAXBITRATE)
+							.val(config.MaxBitrate || DEFAULT_MAX_BITRATE)
 							.change();
 						Dashboard.hideLoadingMsg();
 					});
 				});
 
-				$(".LQDownloadConfigForm").on("submit", function () {
+				$(".LQDownloadConfigForm").on("submit", function (e) {
+					e.preventDefault();
 					Dashboard.showLoadingMsg();
 					var form = this;
 
-					let maxBitrate = $("#MaxBitrate").val();
-					if (maxBitrate < 0) maxBitrate = DEFAULT_MAXBITRATE;
+					if ($("#TargetBitrate").val() < 0) $("#TargetBitrate").val(DEFAULT_TARGET_BITRATE);
+					if ($("#MaxBitrate").val() < $("#TargetBitrate").val()) $("#MaxBitrate").val($("#TargetBitrate").val());
 
 					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
+						config.EncodeOnImport = $("#EncodeOnImport", form).is(":checked");
 						config.Resolution = $("#Resolution", form).val();
-						config.MaxBitrate = maxBitrate;
+						config.TargetBitrate = $("#TargetBitrate").val();
+						config.MaxBitrate = $("#MaxBitrate").val();
 						ApiClient.updatePluginConfiguration(LQDownloadConfig.pluginUniqueId, config).then(Dashboard.processPluginConfigurationUpdateResult);
 					});
 
