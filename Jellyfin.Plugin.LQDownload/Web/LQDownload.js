@@ -8,11 +8,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+let configResolution = "";
 let currentUrl = "";
 let pageLoadTime = 0;
-let configResolution = "";
-let needsTranscoding = false;
-let transcodeProgress = 0;
+let currentItem = null;
 // Initial load
 onPageChange();
 // Save the original methods
@@ -50,25 +49,34 @@ function onPageChange() {
     currentUrl = location.href;
     pageLoadTime = Date.now();
     console.log("LQDOWNLOAD: page change", currentUrl);
-    // Reset values
-    needsTranscoding = false;
-    transcodeProgress = 0;
+    // Reset item
+    currentItem = null;
     // Stop if not on details page
     if (!currentUrl.includes("/#/details"))
         return;
     // Get item ID from URL
     const itemId = getItemIdFromUrl();
-    if (itemId)
-        getItemTranscodeStatus(itemId);
+    if (itemId) {
+        // Create empty item
+        currentItem = {
+            id: itemId,
+            needsTranscoding: false,
+            isTranscoding: false,
+            transcodeProgress: 0,
+        };
+        getItemTranscodeStatus();
+    }
 }
 /**
  * Load values for item
  */
-function getItemTranscodeStatus(itemId) {
+function getItemTranscodeStatus() {
     return __awaiter(this, void 0, void 0, function* () {
-        console.log("LQDOWNLOAD: getItemTranscodeStatus for itemId", itemId);
+        if (currentItem == null)
+            return;
+        console.log("LQDOWNLOAD: getItemTranscodeStatus for itemId", currentItem.id);
         const urlBase = location.href.split("web/#")[0];
-        const url = `${urlBase}LQDownload/ClientScript/TranscodeStatus?itemId=${encodeURIComponent(itemId)}`;
+        const url = `${urlBase}LQDownload/ClientScript/TranscodeStatus?itemId=${encodeURIComponent(currentItem.id)}`;
         try {
             const response = yield fetch(url, {
                 method: "GET",
@@ -82,14 +90,13 @@ function getItemTranscodeStatus(itemId) {
             }
             // Check that we're still on this item's page
             const urlItemId = getItemIdFromUrl();
-            if (urlItemId != itemId)
+            if (urlItemId != (currentItem === null || currentItem === void 0 ? void 0 : currentItem.id))
                 return;
             const result = yield response.json();
             console.log("LQDOWNLOAD: Transcode status result:", result);
             configResolution = result.configResolution;
-            needsTranscoding = result.needsTranscoding;
-            transcodeProgress = result.transcodeProgress;
-            updateProgressUI(itemId);
+            currentItem = result.item;
+            updateUI();
         }
         catch (error) {
             console.error("LQDOWNLOAD: Error fetching transcode status:", error);
@@ -99,90 +106,72 @@ function getItemTranscodeStatus(itemId) {
 /**
  * Update the UI with progress or complete
  */
-function updateProgressUI(itemId) {
-    if (!needsTranscoding) {
-        let progressEls = document.querySelectorAll(".lqdownload-transcoding-progress");
-        console.log("LQDOWNLOAD: progressEls", progressEls);
-        if (progressEls.length > 0 && (transcodeProgress == 0 || transcodeProgress == 100)) {
-            console.log("LQDOWNLOAD: transcode complete");
-            transcodeProgress = 100;
-        }
-        if (transcodeProgress > 0) {
-            if (progressEls.length == 0) {
-                console.log("LQDOWNLOAD: add progress section");
-                // Recursive function to check for versionContainers
-                function waitForVersionContainers() {
-                    const versionContainers = document.querySelectorAll("form.trackSelections .selectSourceContainer");
-                    if (versionContainers.length > 0) {
-                        console.log("LQDOWNLOAD: versionContainers found, adding progress section");
-                        // Add progress section
-                        const progressEl = createTranscodeProgressElement();
-                        if (progressEl) {
-                            versionContainers.forEach((versionContainer) => {
-                                versionContainer.insertAdjacentElement("afterend", progressEl);
-                            });
-                            updateProgressUI(itemId); // Retry the main function
-                        }
-                    }
-                    else if (Date.now() - pageLoadTime < 10000) {
-                        // Retry after 100ms if within 10 seconds of page load
-                        console.log("LQDOWNLOAD: waiting for versionContainers...");
-                        setTimeout(waitForVersionContainers, 100);
-                    }
-                    else {
-                        console.warn("LQDOWNLOAD: versionContainers not found within 10 seconds.");
-                    }
-                }
-                waitForVersionContainers(); // Start the recursive check
-                return; // Stop further execution until containers are loaded
+function updateUI() {
+    if (currentItem == null)
+        return;
+    if (currentItem.isTranscoding) {
+        // Pending or currently transcoding
+        const selectVideoContainers = document.querySelectorAll("form.trackSelections .selectVideoContainer");
+        if (selectVideoContainers.length == 0) {
+            if (Date.now() - pageLoadTime < 10000) {
+                // Retry main function at increments
+                setTimeout(updateUI, 500);
             }
-            if (progressEls.length > 0) {
-                console.log("LQDOWNLOAD: set progress");
-                // Set progress
-                progressEls.forEach((el) => {
-                    const progressBar = el.querySelector(".lqdownload-progress-bar");
-                    if (progressBar instanceof HTMLElement)
-                        progressBar.style.width = `${transcodeProgress}%`;
-                    const progressPercent = el.querySelector(".lqdownload-progress-percent");
-                    if (progressPercent)
-                        progressPercent.innerHTML = `${Math.round(transcodeProgress)}%`;
-                });
-                if (transcodeProgress < 100) {
-                    setTimeout(() => getItemTranscodeStatus(itemId), 2000);
-                }
-                else {
-                    updateUIComplete();
-                }
+            else {
+                console.warn("LQDOWNLOAD: selectVideoContainers not found within 10 seconds.");
             }
+            // Stop further execution
+            return;
         }
+        // Add progress elements before each selectVideoContainer
+        selectVideoContainers.forEach((container) => {
+            var _a;
+            if (!((_a = container.previousElementSibling) === null || _a === void 0 ? void 0 : _a.classList.contains("lqdownload-transcoding-progress"))) {
+                const progressEl = createTranscodeProgressElement();
+                if (progressEl)
+                    container.insertAdjacentElement("beforebegin", progressEl.cloneNode(true));
+            }
+        });
+        console.log("LQDOWNLOAD: set progress");
+        // Set the progress
+        document.querySelectorAll(".lqdownload-transcoding-progress").forEach((el) => {
+            if (currentItem == null)
+                return;
+            const progressBar = el.querySelector(".lqdownload-progress-bar");
+            if (progressBar instanceof HTMLElement)
+                progressBar.style.width = `${currentItem.transcodeProgress}%`;
+            const progressPercent = el.querySelector(".lqdownload-progress-percent");
+            if (progressPercent)
+                progressPercent.innerHTML = currentItem.transcodeProgress == 0 ? "Pending" : `${currentItem.transcodeProgress.toFixed(1)}%`;
+        });
+        // Refresh progress in 2 sec
+        setTimeout(() => getItemTranscodeStatus(), 2000);
     }
-}
-/**
- * Update the UI to show completed and refresh button
- */
-function updateUIComplete() {
-    console.log("LQDOWNLOAD: show completed");
-    const progressEls = document.querySelectorAll(".lqdownload-transcoding-progress");
-    progressEls.forEach((el) => {
-        var _a, _b;
-        // Remove percent
-        (_a = el.querySelector(".lqdownload-progress-percent")) === null || _a === void 0 ? void 0 : _a.remove();
-        // Create button and replace progress bar
-        const button = document.createElement("button");
-        button.type = "button";
-        button.style.appearance = "none";
-        button.style.border = "none";
-        button.style.display = "block";
-        button.style.width = "100%";
-        button.style.height = "100%";
-        button.style.backgroundColor = "#007ea8";
-        button.style.color = "#fff";
-        button.style.cursor = "pointer";
-        button.textContent = "Refresh Page";
-        (_b = el.querySelector(".lqdownload-progress-bar")) === null || _b === void 0 ? void 0 : _b.replaceWith(button);
-        // Handle button clicks (refresh page)
-        button.addEventListener("click", () => location.reload());
-    });
+    else {
+        console.log("Transcode not needed, or completed");
+        // Potentially completed transcode
+        // Update the UI to show completed and refresh button, if progress item exists
+        document.querySelectorAll(".lqdownload-transcoding-progress").forEach((el) => {
+            var _a, _b;
+            // Remove percent
+            (_a = el.querySelector(".lqdownload-progress-percent")) === null || _a === void 0 ? void 0 : _a.remove();
+            // Create button and replace progress bar
+            const button = document.createElement("button");
+            button.type = "button";
+            button.style.appearance = "none";
+            button.style.border = "none";
+            button.style.display = "block";
+            button.style.width = "100%";
+            button.style.height = "100%";
+            button.style.backgroundColor = "#007ea8";
+            button.style.color = "#fff";
+            button.style.cursor = "pointer";
+            button.textContent = "Refresh Page";
+            (_b = el.querySelector(".lqdownload-progress-bar")) === null || _b === void 0 ? void 0 : _b.replaceWith(button);
+            // Handle button clicks (refresh page)
+            button.addEventListener("click", () => location.reload());
+        });
+    }
 }
 /**
  * When the More button is clicked on movie/show details page
@@ -209,11 +198,12 @@ function onMoreButtonClick() {
     requestAnimationFrame(waitForDownloadButton);
 }
 /**
- * Adds transcode button to the menu
+ * Adds transcode button to the menu, if applicable
  */
 function addTranscodeButton(dialog, downloadButton) {
     return __awaiter(this, void 0, void 0, function* () {
-        if (!needsTranscoding)
+        // If it doesn't need transcoding, or it already is transcoding, don't add button
+        if (!(currentItem === null || currentItem === void 0 ? void 0 : currentItem.needsTranscoding) || (currentItem === null || currentItem === void 0 ? void 0 : currentItem.isTranscoding))
             return;
         // Right-align popup
         dialog.style.left = "unset";
@@ -243,18 +233,21 @@ function addTranscodeButton(dialog, downloadButton) {
 function onTranscode() {
     return __awaiter(this, void 0, void 0, function* () {
         // Get item ID from URL
-        const itemId = getItemIdFromUrl();
-        console.log("LQDOWNLOAD: transcode itemId", itemId);
-        if (!itemId)
+        if (currentItem == null)
             return;
-        needsTranscoding = false;
+        console.log("LQDOWNLOAD: transcode itemId", currentItem.id);
+        currentItem.needsTranscoding = false;
         const urlBase = location.href.split("web/#")[0];
-        const url = `${urlBase}LQDownload/ClientScript/Transcode?itemId=${encodeURIComponent(itemId)}`;
+        const url = `${urlBase}LQDownload/ClientScript/Transcode?itemId=${encodeURIComponent(currentItem.id)}`;
         try {
+            const accessToken = getAccessToken();
+            if (!accessToken)
+                throw "No access token";
             const response = yield fetch(url, {
                 method: "GET",
                 headers: {
                     "Content-Type": "application/json",
+                    Authorization: `MediaBrowser Token="${accessToken}"`,
                 },
             });
             if (!response.ok) {
@@ -263,8 +256,9 @@ function onTranscode() {
             }
             const result = yield response.json();
             console.log("LQDOWNLOAD: Transcode start result:", result);
-            transcodeProgress = 0.01;
-            updateProgressUI(itemId);
+            currentItem.isTranscoding = true;
+            currentItem.transcodeProgress = 0;
+            updateUI();
         }
         catch (error) {
             console.error("LQDOWNLOAD: Error fetching transcode status:", error);
@@ -284,4 +278,22 @@ function createTranscodeProgressElement() {
 			</div>
 		</div>`;
     return tempContainer.firstElementChild;
+}
+/**
+ * Gets an access token for authenticated API request.
+ */
+function getAccessToken() {
+    var _a, _b;
+    if (typeof ((_b = (_a = window.ApiClient) === null || _a === void 0 ? void 0 : _a._serverInfo) === null || _b === void 0 ? void 0 : _b.AccessToken) === "string")
+        return window.ApiClient._serverInfo.AccessToken;
+    const jellyfinCredentials = localStorage.getItem("jellyfin_credentials");
+    if (!jellyfinCredentials)
+        return;
+    const credentials = JSON.parse(jellyfinCredentials);
+    if (!credentials || !Array.isArray(credentials.Servers))
+        return;
+    // Match the server based on the current address
+    const urlBase = new URL(location.href).origin;
+    const server = credentials.Servers.find((s) => s.ManualAddress === urlBase || s.LocalAddress === urlBase);
+    return server === null || server === void 0 ? void 0 : server.AccessToken;
 }

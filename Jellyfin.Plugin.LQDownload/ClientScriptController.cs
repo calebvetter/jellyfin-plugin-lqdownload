@@ -6,6 +6,8 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.LQDownload.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Session;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -54,9 +56,13 @@ namespace Jellyfin.Plugin.LQDownload.Api {
 		/// <param name="itemId">ID of Video.</param>
 		/// <returns>Success.</returns>
 		[HttpGet("Transcode")]
+		[Authorize]
 		public IActionResult Transcode([FromQuery] string itemId) {
-			// TODO: verify user is authenticated
-			var success = Plugin.Instance!.TranscodeVideo(itemId);
+			if (!Guid.TryParse(itemId, out var videoId)) {
+				return NotFound("Invalid guid");
+			}
+
+			var success = Plugin.Instance!.TranscodeVideo(videoId);
 			return Ok(new {
 				success
 			});
@@ -79,73 +85,41 @@ namespace Jellyfin.Plugin.LQDownload.Api {
 		/// </returns>
 		[HttpGet("TranscodeStatus")]
 		public IActionResult TranscodeStatus([FromQuery] string itemId) {
-			_logger.LogInformation("Get transcode status for {Id}", itemId);
+			if (!Guid.TryParse(itemId, out var videoId)) {
+				return NotFound("Invalid guid");
+			}
+
 			var configResolution = Plugin.Instance!.Configuration.Resolution switch {
 				ResolutionOptions.Resolution1080p => "1080p",
 				ResolutionOptions.Resolution720p => "720p",
 				ResolutionOptions.Resolution480p => "480p",
 				_ => "1080p"
 			};
-			var maxBitrate = Plugin.Instance!.Configuration.MaxBitrate;
 
-			var needsTranscoding = false;
+			bool needsTranscoding;
+			var isTranscoding = false;
 			double transcodeProgress = 0;
 
-			var video = Plugin.Instance.GetVideo(itemId);
-			if (video != null) {
+			// Check if video is transcoding or in queue
+			if (Plugin.Instance.TranscodeQueue.TryGetValue(videoId, out var videoStatus)) {
 				needsTranscoding = true;
+				isTranscoding = true;
+				transcodeProgress = videoStatus.Progress;
+			}
 
-				if (video.LocalAlternateVersions.Length > 0) {
-					foreach (var version in video.LocalAlternateVersions) {
-						_logger.LogInformation("version {Version}", version);
-
-						// Get the filename only
-						var fileName = Path.GetFileName(version);
-
-						_logger.LogInformation("filename {Filename}", fileName);
-
-						// Check if the file contains the resolution tag
-						if (fileName.Contains(configResolution, StringComparison.OrdinalIgnoreCase)) {
-							_logger.LogInformation("has resolution tag");
-
-							// Check if it contains a bitrate tag and extract the number
-							var match = Regex.Match(fileName, @"\[(\d+)kbps\]", RegexOptions.IgnoreCase);
-							if (match.Success) {
-								_logger.LogInformation("kbps regex match success");
-								if (int.TryParse(match.Groups[1].Value, out var bitrate)) {
-									_logger.LogInformation("filename bitrate {Bitrate}", bitrate);
-									_logger.LogInformation("max bitrate {MaxBitrate}", maxBitrate);
-									if (bitrate <= maxBitrate) {
-										needsTranscoding = false;
-										break; // Found a valid version, exit the loop
-									}
-								}
-							}
-						}
-					}
-				}
-
-				if (needsTranscoding) {
-					// TODO: see logs as to why queued transcodes show needsTranscoding = true
-					foreach (var status in Plugin.Instance.TranscodingStatus) {
-						_logger.LogInformation("Transcode status: {Key}, {VideoName}, {Progress}", status.Key, status.Value.Video.Name, status.Value.Progress);
-					}
-
-					// Check if transcoding job is currently running
-					var matchingStatus = Plugin.Instance.TranscodingStatus.FirstOrDefault(kvp => kvp.Value.Video.Id == video.Id);
-					if (!matchingStatus.Equals(default(KeyValuePair<Guid, (Video Video, double Progress)>))) {
-						needsTranscoding = false;
-						var transcodingVideo = matchingStatus.Value.Video;
-						transcodeProgress = matchingStatus.Value.Progress;
-						Console.WriteLine($"Found transcoding status: Video={transcodingVideo.Name}, Progress={transcodeProgress}%");
-					}
-				}
+			// Check if video needs to be transcoded
+			else {
+				needsTranscoding = Plugin.Instance.IsTranscodingNeeded(videoId);
 			}
 
 			return Ok(new {
 				configResolution,
-				needsTranscoding,
-				transcodeProgress
+				item = new {
+					id = itemId,
+					needsTranscoding,
+					isTranscoding,
+					transcodeProgress
+				}
 			});
 		}
 	}

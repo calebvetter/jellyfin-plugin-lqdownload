@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -29,7 +28,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	private readonly IServerConfigurationManager _serverConfigurationManager;
 	private readonly ILogger<TranscodingHandler> _logger;
 	private readonly TranscodingHandler _transcodingHandler;
-	private readonly ConcurrentDictionary<Guid, (Video Video, double Progress)> _transcodingStatus = new();
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -75,9 +73,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
 		// Add frontend script
 		InjectWebJs();
-
-		// Perform any additional initialization for the TranscodingHandler
-		_transcodingHandler.Initialize();
 	}
 
 	/// <inheritdoc />
@@ -94,7 +89,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	/// <summary>
 	/// Gets the transcoding status for the plugin.
 	/// </summary>
-	public IReadOnlyDictionary<Guid, (Video Video, double Progress)> TranscodingStatus => _transcodingStatus;
+	public IReadOnlyDictionary<Guid, TranscodeQueueItem> TranscodeQueue => _transcodingHandler.TranscodeQueue;
 
 	/// <summary>
 	/// Injects frontend javascript in web UI.
@@ -164,47 +159,54 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	}
 
 	/// <summary>
+	/// Determines whether a video requires transcoding.
+	/// </summary>
+	/// <param name="videoId">
+	/// The <see cref="Guid"/> object to evaluate for transcoding requirements.
+	/// </param>
+	/// <returns>
+	/// <c>true</c> if transcoding is required; otherwise, <c>false</c>.
+	/// </returns>
+	/// <remarks>
+	/// This method delegates the evaluation to the <see cref="TranscodingHandler.NeedsTranscoding"/> method
+	/// and returns <c>true</c> if the result is not <c>null</c>.
+	/// </remarks>
+	public bool IsTranscodingNeeded(Guid videoId) {
+		// Validate and get video
+		var video = GetVideo(videoId);
+		if (video == null) {
+			return false;
+		}
+
+		// Check if transcoding is needed
+		return _transcodingHandler.NeedsTranscoding(video) != null;
+	}
+
+	/// <summary>
 	/// Transcodes a video by ID.
 	/// </summary>
 	/// <param name="videoId">ID of the video.</param>
 	/// <returns>Whether the task was started.</returns>
-	public bool TranscodeVideo(string videoId) {
+	public bool TranscodeVideo(Guid videoId) {
+		// Validate and get video
 		var video = GetVideo(videoId);
-		if (video != null) {
-			_ = _transcodingHandler.TryTranscode(video);
-			return true;
+		if (video == null) {
+			return false;
 		}
 
-		return false;
-	}
-
-	/// <summary>
-	/// Adds or updates the transcoding status for a video.
-	/// </summary>
-	/// <param name="videoId">The unique identifier for the video.</param>
-	/// <param name="video">The video object.</param>
-	/// <param name="progress">The progress of transcoding as a percentage.</param>
-	public void UpdateTranscodingStatus(Guid videoId, Video video, double progress) {
-		_transcodingStatus[videoId] = (video, progress);
-	}
-
-	/// <summary>
-	/// Removes the transcoding status for a video.
-	/// </summary>
-	/// <param name="videoId">The unique identifier for the video to be removed.</param>
-	public void RemoveTranscodingStatus(Guid videoId) {
-		_transcodingStatus.TryRemove(videoId, out _);
+		// Add to transcode queue
+		return _transcodingHandler.AddToQueue(video);
 	}
 
 	/// <summary>
 	/// Retrieves an item by its ID and checks if it is a video.
 	/// </summary>
-	/// <param name="itemId">The ID of the item to retrieve.</param>
+	/// <param name="videoId">The ID of the item to retrieve.</param>
 	/// <returns>
 	/// The item as a <see cref="Video"/> object if it is a video; otherwise, <c>null</c>.
 	/// </returns>
-	public Video? GetVideo(string itemId) {
-		var item = _libraryManager.GetItemById(itemId);
+	private Video? GetVideo(Guid videoId) {
+		var item = _libraryManager.GetItemById(videoId);
 		return item is Video video ? video : null;
 	}
 
@@ -224,7 +226,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	/// <param name="serviceCollection">The service collection.</param>
 	public static void Load(IServiceCollection serviceCollection) {
 		serviceCollection.AddSingleton<TranscodingHandler>();
-		serviceCollection.AddSingleton<TranscodingStatusController>();
+		serviceCollection.AddSingleton<ClientScriptController>();
 	}
 
 	/// <summary>
