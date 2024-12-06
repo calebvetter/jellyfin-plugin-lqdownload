@@ -1,22 +1,25 @@
+enum TranscodeStatus {
+	NotNeeded,
+	CanTranscode,
+	Queued,
+	Transcoding,
+	Completed,
+}
+
 interface TranscodeItem {
 	/** Video ID */
 	id: string;
 
-	/**
-	 * Whether the video needs transcoding. `true` could mean
-	 * it is currently transcoding. `false` could mean it's
-	 * already completed.
-	 */
-	needsTranscoding: boolean;
+	/** The status of the item */
+	status: TranscodeStatus;
 
-	/** Actively transcoding, or in the queue */
-	isTranscoding: boolean;
-
-	/** Current progress, or pending if `0` and `isTranscoding` */
+	/** Current progress */
 	transcodeProgress: number;
+
+	/** Config resolution if not transcoded, or video resolution if transcoded */
+	resolution: string;
 }
 
-let configResolution = "";
 let currentUrl = "";
 let pageLoadTime = 0;
 let currentItem: TranscodeItem | null = null;
@@ -46,8 +49,9 @@ history.replaceState = function (...args) {
 window.addEventListener("popstate", onPageChange);
 
 // Listen for app command events
-document.addEventListener("command", (e) => {
-	if (e.target instanceof HTMLElement && e.target.classList.contains("btnMoreCommands")) onMoreButtonClick();
+document.addEventListener("click", (e) => {
+	const button = (e.target as HTMLElement).closest(".btnMoreCommands");
+	if (button) onMoreButtonClick();
 });
 
 function getItemIdFromUrl() {
@@ -77,9 +81,9 @@ function onPageChange() {
 		// Create empty item
 		currentItem = {
 			id: itemId,
-			needsTranscoding: false,
-			isTranscoding: false,
+			status: TranscodeStatus.NotNeeded,
 			transcodeProgress: 0,
+			resolution: "",
 		};
 		getItemTranscodeStatus();
 	}
@@ -115,8 +119,14 @@ async function getItemTranscodeStatus() {
 		const result = await response.json();
 		console.log("LQDOWNLOAD: Transcode status result:", result);
 
-		configResolution = result.configResolution;
-		currentItem = result.item;
+		const statusString = result.item.status;
+		const statusEnumValue = (TranscodeStatus as any)[statusString];
+		if (statusEnumValue !== undefined) {
+			currentItem = {
+				...result.item,
+				status: statusEnumValue,
+			};
+		}
 
 		updateUI();
 	} catch (error) {
@@ -130,7 +140,7 @@ async function getItemTranscodeStatus() {
 function updateUI() {
 	if (currentItem == null) return;
 
-	if (currentItem.isTranscoding) {
+	if (currentItem.status == TranscodeStatus.Queued || currentItem.status == TranscodeStatus.Transcoding) {
 		// Pending or currently transcoding
 
 		const selectVideoContainers = document.querySelectorAll("form.trackSelections .selectVideoContainer");
@@ -155,11 +165,9 @@ function updateUI() {
 			}
 		});
 
-		console.log("LQDOWNLOAD: set progress");
-
 		// Set the progress
 		document.querySelectorAll(".lqdownload-transcoding-progress").forEach((el) => {
-			if (currentItem == null) return;
+			if (currentItem == null) return; // For typescript
 			const progressBar = el.querySelector(".lqdownload-progress-bar");
 			if (progressBar instanceof HTMLElement) progressBar.style.width = `${currentItem.transcodeProgress}%`;
 			const progressPercent = el.querySelector(".lqdownload-progress-percent");
@@ -168,31 +176,14 @@ function updateUI() {
 
 		// Refresh progress in 2 sec
 		setTimeout(() => getItemTranscodeStatus(), 2000);
-	} else {
-		console.log("Transcode not needed, or completed");
-		// Potentially completed transcode
-		// Update the UI to show completed and refresh button, if progress item exists
-
+	} else if (currentItem.status == TranscodeStatus.Completed) {
+		// Completed transcode
+		// Update the UI to show completed
 		document.querySelectorAll(".lqdownload-transcoding-progress").forEach((el) => {
-			// Remove percent
-			el.querySelector(".lqdownload-progress-percent")?.remove();
-
-			// Create button and replace progress bar
-			const button = document.createElement("button");
-			button.type = "button";
-			button.style.appearance = "none";
-			button.style.border = "none";
-			button.style.display = "block";
-			button.style.width = "100%";
-			button.style.height = "100%";
-			button.style.backgroundColor = "#007ea8";
-			button.style.color = "#fff";
-			button.style.cursor = "pointer";
-			button.textContent = "Refresh Page";
-			el.querySelector(".lqdownload-progress-bar")?.replaceWith(button);
-
-			// Handle button clicks (refresh page)
-			button.addEventListener("click", () => location.reload());
+			const progressBar = el.querySelector(".lqdownload-progress-bar");
+			if (progressBar instanceof HTMLElement) progressBar.style.width = "100%";
+			const progressPercent = el.querySelector(".lqdownload-progress-percent");
+			if (progressPercent) progressPercent.innerHTML = "100%";
 		});
 	}
 }
@@ -201,19 +192,23 @@ function updateUI() {
  * When the More button is clicked on movie/show details page
  */
 function onMoreButtonClick() {
+	console.log("LQDOWNLOAD: onMoreButtonClick");
+
 	const timeout = 1000; // 1 second timeout
 	const startTime = performance.now();
 
 	function waitForDownloadButton() {
 		const dialogs = document.querySelectorAll(".dialogContainer .dialog.opened");
 		const dialog = dialogs.length ? dialogs[dialogs.length - 1] : null;
+		console.log("LQDOWNLOAD: ", dialog);
 
 		if (dialog instanceof HTMLElement) {
 			const downloadButton = dialog.querySelector('button[data-id="download"]');
+			console.log("LQDOWNLOAD: ", downloadButton);
 			if (downloadButton instanceof HTMLElement) {
 				// This is a downloadable item.
 				// Check for pre - transcoded file and display new download button
-				addTranscodeButton(dialog, downloadButton);
+				addMenuButton(dialog, downloadButton);
 				return;
 			}
 		}
@@ -228,31 +223,43 @@ function onMoreButtonClick() {
 /**
  * Adds transcode button to the menu, if applicable
  */
-async function addTranscodeButton(dialog: HTMLElement, downloadButton: HTMLElement) {
+async function addMenuButton(dialog: HTMLElement, downloadButton: HTMLElement) {
+	console.log("LQDOWNLOAD: addMenuButton");
 	// If it doesn't need transcoding, or it already is transcoding, don't add button
-	if (!currentItem?.needsTranscoding || currentItem?.isTranscoding) return;
+	if (currentItem == null || (currentItem.status != TranscodeStatus.CanTranscode && currentItem.status != TranscodeStatus.Completed)) return;
+
+	console.log("LQDOWNLOAD: actually add menu button");
 
 	// Right-align popup
 	dialog.style.left = "unset";
 	dialog.style.right = "10px";
 
-	// Create transcode button
+	// Create button
 	const newButton = document.createElement("button");
 	newButton.setAttribute("is", "emby-button");
 	newButton.setAttribute("type", "button");
-	newButton.className = "listItem listItem-button actionSheetMenuItem emby-button";
+	newButton.className = `listItem listItem-button actionSheetMenuItem emby-button ${isMobile() ? "actionsheet-xlargeFont" : ""}`;
 	newButton.setAttribute("data-id", "download-lq");
+
+	let icon = "video_settings";
+	let text = `Create ${currentItem.resolution} Version`;
+	let onClick = onTranscode;
+	if (currentItem.status == TranscodeStatus.Completed) {
+		icon = "file_download";
+		text = `Download ${currentItem.resolution}`;
+		onClick = onDownload;
+	}
 
 	// Create inner content for the button
 	newButton.innerHTML = `
-		<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons video_settings" aria-hidden="true"></span>
+		<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons ${icon}" aria-hidden="true"></span>
 		<div class="listItemBody actionsheetListItemBody">
-				<div class="listItemBodyText actionSheetItemText">Create ${configResolution} Version</div>
+				<div class="listItemBodyText actionSheetItemText">${text}</div>
 		</div>
 	`;
 
 	// Add the button click event listener
-	newButton.addEventListener("click", onTranscode);
+	newButton.addEventListener("click", onClick);
 
 	// Insert the new button after the downloadButton in the DOM
 	downloadButton.insertAdjacentElement("afterend", newButton);
@@ -267,7 +274,7 @@ async function onTranscode() {
 
 	console.log("LQDOWNLOAD: transcode itemId", currentItem.id);
 
-	currentItem.needsTranscoding = false;
+	currentItem.status = TranscodeStatus.Queued;
 
 	const urlBase = location.href.split("web/#")[0];
 	const url = `${urlBase}LQDownload/ClientScript/Transcode?itemId=${encodeURIComponent(currentItem.id)}`;
@@ -292,12 +299,58 @@ async function onTranscode() {
 		const result = await response.json();
 		console.log("LQDOWNLOAD: Transcode start result:", result);
 
-		currentItem.isTranscoding = true;
-		currentItem.transcodeProgress = 0;
-
 		updateUI();
 	} catch (error) {
 		console.error("LQDOWNLOAD: Error fetching transcode status:", error);
+	}
+}
+
+/**
+ * Download button click
+ */
+async function onDownload() {
+	if (currentItem == null) return;
+
+	console.log("LQDOWNLOAD: Download itemId", currentItem.id);
+
+	const urlBase = location.href.split("web/#")[0];
+	const url = `${urlBase}LQDownload/ClientScript/Download?itemId=${encodeURIComponent(currentItem.id)}`;
+
+	try {
+		const accessToken = getAccessToken();
+		if (!accessToken) throw "No access token";
+
+		// Make the authenticated request
+		const response = await fetch(url, {
+			method: "GET",
+			headers: {
+				Authorization: `MediaBrowser Token="${accessToken}"`,
+			},
+		});
+
+		if (!response.ok) {
+			console.error("LQDOWNLOAD: Failed to download. HTTP status:", response.status);
+			return;
+		}
+
+		// Extract filename from headers if possible
+		const contentDisposition = response.headers.get("Content-Disposition");
+		let fileName = "downloaded-file.mp4";
+		if (contentDisposition) {
+			const match = contentDisposition.match(/filename="(.+?)"/);
+			if (match) fileName = match[1];
+		}
+
+		// Create a blob and download the file
+		const blob = await response.blob();
+		const link = document.createElement("a");
+		link.href = URL.createObjectURL(blob);
+		link.download = fileName;
+		link.click();
+
+		console.log("LQDOWNLOAD: Download successful:", fileName);
+	} catch (error) {
+		console.error("LQDOWNLOAD: Error during download:", error);
 	}
 }
 
@@ -332,4 +385,21 @@ function getAccessToken() {
 	const server = credentials.Servers.find((s: any) => s.ManualAddress === urlBase || s.LocalAddress === urlBase);
 
 	return server?.AccessToken;
+}
+
+/**
+ * Gets whether the user is on mobile (function pulled from Jellyfin web)
+ */
+function isMobile() {
+	const terms = ["mobi", "ipad", "iphone", "ipod", "silk", "gt-p1000", "nexus 7", "kindle fire", "opera mini"];
+
+	const lower = navigator.userAgent.toLowerCase();
+
+	for (let i = 0, length = terms.length; i < length; i++) {
+		if (lower.indexOf(terms[i]) !== -1) {
+			return true;
+		}
+	}
+
+	return false;
 }

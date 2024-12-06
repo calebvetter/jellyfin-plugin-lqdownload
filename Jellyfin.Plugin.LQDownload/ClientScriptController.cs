@@ -1,12 +1,11 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.LQDownload.Configuration;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Session;
+using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -17,14 +16,17 @@ namespace Jellyfin.Plugin.LQDownload.Api {
 	/// </summary>
 	[ApiController]
 	[Route("LQDownload/ClientScript")]
-	public class ClientScriptController : ControllerBase {
+	public partial class ClientScriptController : ControllerBase {
+		private readonly ILibraryManager _libraryManager;
 		private readonly ILogger<ClientScriptController> _logger;
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="ClientScriptController"/> class.
 		/// </summary>
+		/// /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface to manage Jellyfin library items.</param>
 		/// <param name="logger">The logger for logging events and errors.</param>
-		public ClientScriptController(ILogger<ClientScriptController> logger) {
+		public ClientScriptController(ILibraryManager libraryManager, ILogger<ClientScriptController> logger) {
+			_libraryManager = libraryManager;
 			_logger = logger;
 		}
 
@@ -89,38 +91,80 @@ namespace Jellyfin.Plugin.LQDownload.Api {
 				return NotFound("Invalid guid");
 			}
 
-			var configResolution = Plugin.Instance!.Configuration.Resolution switch {
+			var resolution = Plugin.Instance!.Configuration.Resolution switch {
 				ResolutionOptions.Resolution1080p => "1080p",
 				ResolutionOptions.Resolution720p => "720p",
 				ResolutionOptions.Resolution480p => "480p",
 				_ => "1080p"
 			};
 
-			bool needsTranscoding;
-			var isTranscoding = false;
-			double transcodeProgress = 0;
+			var (status, transcodeProgress, path, _) = Plugin.Instance!.GetTranscodeStatus(videoId);
 
-			// Check if video is transcoding or in queue
-			if (Plugin.Instance.TranscodeQueue.TryGetValue(videoId, out var videoStatus)) {
-				needsTranscoding = true;
-				isTranscoding = true;
-				transcodeProgress = videoStatus.Progress;
-			}
-
-			// Check if video needs to be transcoded
-			else {
-				needsTranscoding = Plugin.Instance.IsTranscodingNeeded(videoId);
+			if (status == LQDownload.TranscodeStatus.Completed && !string.IsNullOrEmpty(path)) {
+				// Extract resolution from filename tag
+				var fileName = Path.GetFileNameWithoutExtension(path);
+				var match = ResolutionRegex().Match(fileName);
+				if (match.Success) {
+					resolution = match.Groups[1].Value; // Capture the resolution (e.g., "1080p")
+				}
 			}
 
 			return Ok(new {
-				configResolution,
 				item = new {
 					id = itemId,
-					needsTranscoding,
-					isTranscoding,
-					transcodeProgress
+					status,
+					transcodeProgress,
+					resolution
 				}
 			});
+		}
+
+		[GeneratedRegex(@"\[(\d{3,4}p)\]")]
+		private static partial Regex ResolutionRegex();
+
+		/// <summary>
+		/// Handles the download request for a video file by its ID.
+		/// </summary>
+		/// <param name="itemId">The GUID of the video item, provided as a query parameter.</param>
+		/// <returns>
+		/// A file download response containing the requested video file with the ".lqdownload" extension removed,
+		/// or an error response if the file does not exist or the provided GUID is invalid.
+		/// </returns>
+		/// <remarks>
+		/// This endpoint is protected and requires authorization.
+		/// The returned file will have the ".mp4" extension after removing ".lqdownload".
+		/// </remarks>
+		[HttpGet("Download")]
+		[Authorize]
+		public IActionResult Download([FromQuery] string itemId) {
+			if (!Guid.TryParse(itemId, out var videoId)) {
+				return NotFound("Invalid guid");
+			}
+
+			if (_libraryManager.GetItemById(videoId.ToString()) is not Video video) {
+				return NotFound("Video not found");
+			}
+
+			var directory = Path.GetDirectoryName(video.Path);
+
+			if (directory == null || !Directory.Exists(directory)) {
+				return NotFound("Directory not found");
+			}
+
+			var lqDownloadFile = Directory.EnumerateFiles(directory, "*.lqdownload").FirstOrDefault();
+
+			if (lqDownloadFile == null) {
+				return NotFound("File not found");
+			}
+
+			// Modify the file name by removing the ".lqdownload" extension
+			var fileName = Path.GetFileName(lqDownloadFile)
+				.Replace(
+					".lqdownload",
+					string.Empty,
+					StringComparison.OrdinalIgnoreCase);
+
+			return PhysicalFile(lqDownloadFile, "video/mp4", fileName);
 		}
 	}
 }

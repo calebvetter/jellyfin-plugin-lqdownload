@@ -165,21 +165,25 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	/// The <see cref="Guid"/> object to evaluate for transcoding requirements.
 	/// </param>
 	/// <returns>
-	/// <c>true</c> if transcoding is required; otherwise, <c>false</c>.
+	/// The status, progress, file path, and transcode options.
 	/// </returns>
 	/// <remarks>
-	/// This method delegates the evaluation to the <see cref="TranscodingHandler.NeedsTranscoding"/> method
+	/// This method delegates the evaluation to the <see cref="TranscodingHandler.GetTranscodeStatus"/> method
 	/// and returns <c>true</c> if the result is not <c>null</c>.
 	/// </remarks>
-	public bool IsTranscodingNeeded(Guid videoId) {
+	public (
+			TranscodeStatus Status,
+			double Progress,
+			string? Path,
+			TranscodingOptions? Options) GetTranscodeStatus(Guid videoId) {
 		// Validate and get video
 		var video = GetVideo(videoId);
 		if (video == null) {
-			return false;
+			return (TranscodeStatus.NotNeeded, 0, null, null);
 		}
 
-		// Check if transcoding is needed
-		return _transcodingHandler.NeedsTranscoding(video) != null;
+		// Get status
+		return _transcodingHandler.GetTranscodeStatus(video);
 	}
 
 	/// <summary>

@@ -19,6 +19,39 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LQDownload {
 	/// <summary>
+	/// Represents the current status of a video in the transcoding process.
+	/// </summary>
+	public enum TranscodeStatus {
+		/// <summary>
+		/// Indicates that transcoding is not required for the video.
+		/// </summary>
+		NotNeeded,
+
+		/// <summary>
+		/// Indicates that the video can be transcoded if requested,
+		/// but it has not been queued or started yet.
+		/// </summary>
+		CanTranscode,
+
+		/// <summary>
+		/// Indicates that the video has been queued for transcoding,
+		/// but the process has not started yet.
+		/// </summary>
+		Queued,
+
+		/// <summary>
+		/// Indicates that the transcoding process is currently in progress for the video.
+		/// </summary>
+		Transcoding,
+
+		/// <summary>
+		/// Indicates that the transcoding process has been completed,
+		/// and the transcoded file is available.
+		/// </summary>
+		Completed
+	}
+
+	/// <summary>
 	/// Handles transcoding when new media is added.
 	/// </summary>
 	public class TranscodingHandler : IDisposable {
@@ -27,7 +60,6 @@ namespace Jellyfin.Plugin.LQDownload {
 		private readonly EncodingHelper _encodingHelper;
 		private readonly ILogger<TranscodingHandler> _logger;
 		private readonly ConcurrentDictionary<Guid, TranscodeQueueItem> _transcodeQueue = new();
-		private readonly ConcurrentDictionary<string, string> _itemsToBeLinked = [];
 		private readonly CancellationTokenSource _cancellationTokenSource = new();
 		private readonly SemaphoreSlim _transcodeSemaphore = new(1, 1);
 		private readonly JsonSerializerOptions _jsonOptions = new() {
@@ -91,16 +123,6 @@ namespace Jellyfin.Plugin.LQDownload {
 		private void OnItemAdded(object? sender, ItemChangeEventArgs e) {
 			_logger.LogInformation("Item added {Id} {Name}", e.Item.Id, e.Item.Name);
 
-			if (_itemsToBeLinked.TryGetValue(e.Item.Path, out var originalItemPath)) {
-				// This is a video that was transcoded by this plugin
-				var originalItem = _libraryManager.FindByPath(originalItemPath, false);
-				if (originalItem != null) {
-					TryLinkItem(e.Item, originalItem);
-				}
-
-				return;
-			}
-
 			// Don't do anything if not configured for encode on import
 			if (Plugin.Instance?.Configuration.EncodeOnImport != true) {
 				return;
@@ -113,44 +135,22 @@ namespace Jellyfin.Plugin.LQDownload {
 
 		private void OnItemUpdated(object? sender, ItemChangeEventArgs e) {
 			_logger.LogInformation("Item updated {Id} {Name}", e.Item.Id, e.Item.Name);
-
-			if (_itemsToBeLinked.TryGetValue(e.Item.Path, out var originalItemPath)) {
-				// This is a video that was transcoded by this plugin
-				var originalItem = _libraryManager.FindByPath(originalItemPath, false);
-				if (originalItem != null) {
-					TryLinkItem(e.Item, originalItem);
-				}
-
-				return;
-			}
 		}
 
 		private void OnItemRemoved(object? sender, ItemChangeEventArgs e) {
 			_logger.LogInformation("Item removed {Id} {Name}", e.Item.Id, e.Item.Name);
 
-			if (e.Item is Video video && _transcodeQueue.TryGetValue(video.Id, out _)) {
-				if (video.Id == _currentVideoId) {
-					_logger.LogInformation("Stopping current transcoding for video: {VideoName}", video.Name);
-					StopCurrentTranscode();
+			if (e.Item is Video video) {
+				// Remove from transcode queue
+				if (_transcodeQueue.TryGetValue(video.Id, out _)) {
+					if (video.Id == _currentVideoId) {
+						_logger.LogInformation("Stopping current transcoding for video: {VideoName}", video.Name);
+						StopCurrentTranscode();
+					}
+
+					_transcodeQueue.TryRemove(video.Id, out _);
+					_logger.LogInformation("Video {VideoName} removed from the transcode queue.", video.Name);
 				}
-
-				_transcodeQueue.TryRemove(video.Id, out _);
-				_logger.LogInformation("Video {VideoName} removed from the transcode queue.", video.Name);
-			}
-		}
-
-		private async void TryLinkItem(BaseItem newItem, BaseItem originalItem) {
-			_itemsToBeLinked.Remove(newItem.Path, out _);
-
-			if (originalItem is not Video originalVideo) {
-				return;
-			}
-
-			if (newItem.OwnerId == Guid.Empty) {
-				newItem.OwnerId = originalItem.Id;
-				await newItem.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, _cancellationTokenSource.Token).ConfigureAwait(false);
-				originalVideo.LocalAlternateVersions = [.. originalVideo.LocalAlternateVersions ?? [], newItem.Path];
-				await originalVideo.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, _cancellationTokenSource.Token).ConfigureAwait(false);
 			}
 		}
 
@@ -187,8 +187,12 @@ namespace Jellyfin.Plugin.LQDownload {
 							if (RefreshQueueItem(queueItem.Video.Id) is TranscodeQueueItem item) {
 								var (video, progress) = item;
 								if (video.Width > 0 && video.Height > 0) {
+									_logger.LogInformation("Process video {Name}", video.Name);
 									// Process the video (semaphore ensures only one at a time)
 									await TranscodeSingleVideo(queueItem).ConfigureAwait(false);
+								}
+								else {
+									_logger.LogInformation("Waiting for metadata {Name}", video.Name);
 								}
 							}
 						}
@@ -266,10 +270,9 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// <param name="video">
 		/// The <see cref="Video"/> object to evaluate for transcoding requirements.
 		/// </param>
-		/// <param name="checkAltVersions">
-		/// A flag indicating whether to check alternate versions of the video.
-		/// If <c>true</c>, the method will inspect alternate versions to determine if they meet the transcoding requirements.
-		/// Defaults to <c>true</c>.
+		/// <param name="skipQueueCheck">
+		/// Skip checking the transcode queue. This is used by the transcode method
+		/// because the video will definitely be in the queue then.
 		/// </param>
 		/// <returns>
 		/// A <see cref="TranscodingOptions"/> object containing the target transcoding settings if transcoding is needed, or <c>null</c> if no transcoding is necessary.
@@ -278,15 +281,92 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// This method checks if the video's resolution and bitrate exceed the plugin's configured limits.
 		/// It also verifies if a transcoded version already exists or if the video is already in the transcoding queue.
 		/// </remarks>
-		public TranscodingOptions? NeedsTranscoding(Video video, bool checkAltVersions = true) {
+		public (
+				TranscodeStatus Status,
+				double Progress,
+				string? Path,
+				TranscodingOptions? Options)
+				GetTranscodeStatus(Video video, bool skipQueueCheck = false) {
 			if (Plugin.Instance?.Configuration is not PluginConfiguration config) {
 				_logger.LogWarning("Plugin configuration not found.");
-				return null;
+				return (TranscodeStatus.NotNeeded, 0, null, null);
 			}
 
 			if (video == null) {
 				_logger.LogWarning("Video is null.");
-				return null;
+				return (TranscodeStatus.NotNeeded, 0, null, null);
+			}
+
+			var directory = Path.GetDirectoryName(video.Path);
+			if (directory == null || !Directory.Exists(directory)) {
+				_logger.LogWarning("Video directory not found.");
+				return (TranscodeStatus.NotNeeded, 0, null, null);
+			}
+
+			// Check queue
+			if (!skipQueueCheck && _transcodeQueue.TryGetValue(video.Id, out var videoStatus)) {
+				_logger.LogInformation("Video is in transcode queue.");
+				var status = videoStatus.Progress == 0 ? TranscodeStatus.Queued : TranscodeStatus.Transcoding;
+				return (status, videoStatus.Progress, null, null);
+			}
+
+			// Look for transcoded file
+			var lqDownloadFile = Directory.EnumerateFiles(directory, "*.lqdownload").FirstOrDefault();
+			if (lqDownloadFile != null) {
+				_logger.LogInformation("lqDownloadFile found.");
+				return (TranscodeStatus.Completed, 100, lqDownloadFile, null);
+			}
+
+			// Check video all versions (local and linked) to see if there's already
+			// one that satisfies resolution/bitrate requirements
+			var versions = new List<Video> { video };
+
+			// Local alternate versions
+			var localAlternateVideos = video.GetLocalAlternateVersionIds()?
+				.SelectMany(id => _libraryManager.GetItemList(new InternalItemsQuery { ItemIds = [id] }))
+				.OfType<Video>() ?? [];
+			versions.AddRange(localAlternateVideos);
+
+			// Linked alternate versions
+			versions.AddRange(video.GetLinkedAlternateVersions());
+
+			// Perform check
+			foreach (var version in versions) {
+				if (!VideoNeedsTranscoding(version)) {
+					// Video meets requirements, transcoding not needed
+					return (TranscodeStatus.NotNeeded, 0, null, null);
+				}
+			}
+
+			// Create transcode options
+			// TODO: get the version with the closest resolution/bitrate
+			// to the target, to minimize processing required.
+			var (targetWidth, targetHeight) = config.Resolution switch {
+				ResolutionOptions.Resolution1080p => (1920, 1080),
+				ResolutionOptions.Resolution720p => (1280, 720),
+				ResolutionOptions.Resolution480p => (854, 480),
+				_ => (1920, 1080)
+			};
+			var transcodingOptions = new TranscodingOptions {
+				MaxWidth = targetWidth,
+				MaxHeight = targetHeight,
+				TargetBitrate = config.TargetBitrate,
+				AudioCodec = "aac",
+				VideoCodec = "h264",
+				Container = "mp4"
+			};
+
+			return (TranscodeStatus.CanTranscode, 0, null, transcodingOptions);
+		}
+
+		/// <summary>
+		/// Check if video needs transcoding.
+		/// </summary>
+		/// <param name="video">The video to check.</param>
+		/// <returns>Null if no transcoding needed, otherwise the target bitrate for transcoding.</returns>
+		private static bool VideoNeedsTranscoding(Video video) {
+			if (Plugin.Instance?.Configuration is not PluginConfiguration config) {
+				return false;
 			}
 
 			var (targetWidth, targetHeight) = config.Resolution switch {
@@ -299,53 +379,9 @@ namespace Jellyfin.Plugin.LQDownload {
 			bool isHigherResolution = video.Width > targetWidth || video.Height > targetHeight;
 			var videoStream = video.GetDefaultVideoStream();
 			int videoBitrate = (videoStream != null && videoStream.BitRate.HasValue ? videoStream.BitRate.Value : 0) / 1000;
-			int targetBitrate = videoBitrate > 0 ? Math.Min(videoBitrate, config.TargetBitrate) : config.TargetBitrate;
 			bool isHigherBitrate = videoBitrate > config.MaxBitrate;
 
-			_logger.LogInformation("{VideoName} has a resolution of {Width}x{Height} and birtate of {Bitrate}kbps", video.Name, video.Width, video.Height, videoBitrate);
-			_logger.LogInformation("Config target resolution is {Width}x{Height} and birtate {Bitrate}kbps", targetWidth, targetHeight, config.MaxBitrate);
-
-			if (!isHigherResolution && !isHigherBitrate) {
-				// No transcoding necessary
-				return null;
-			}
-
-			// Check if transcoded version already exists, and that none are already in the queue
-			if (checkAltVersions && video.LocalAlternateVersions.Length > 0) {
-				var itemIds = video.GetLocalAlternateVersionIds()?.ToArray();
-				if (itemIds != null && itemIds.Length > 0) {
-					var versions = _libraryManager.GetItemList(new InternalItemsQuery() {
-						ItemIds = itemIds
-					});
-
-					foreach (var version in versions) {
-						if (version is Video videoVersion
-								&& (NeedsTranscoding(videoVersion, false) == null
-									|| _transcodeQueue.ContainsKey(videoVersion.Id))) {
-							return null;
-						}
-					}
-				}
-			}
-
-			// Create transcode options
-			var transcodingOptions = new TranscodingOptions {
-				MaxWidth = targetWidth,
-				MaxHeight = targetHeight,
-				TargetBitrate = targetBitrate,
-				AudioCodec = "aac",
-				VideoCodec = "h264",
-				Container = "mp4"
-			};
-
-			// One last check to see if output file already exists (and not picked up by Jellyfin yet)
-			var outputPath = GetTranscodedFilePath(video, transcodingOptions);
-			if (File.Exists(outputPath)) {
-				_logger.LogInformation("Video {Name} file already exists at {Path}", video.Name, outputPath);
-				return null;
-			}
-
-			return transcodingOptions;
+			return isHigherResolution || isHigherBitrate;
 		}
 
 		/// <summary>
@@ -366,24 +402,29 @@ namespace Jellyfin.Plugin.LQDownload {
 				return;
 			}
 
-			if (NeedsTranscoding(video) is not TranscodingOptions options) {
-				_logger.LogInformation("Video {VideoName} does not need transcoding.", video.Name);
-				return;
-			}
-
 			// Wait for the semaphore to process the video
 			await _transcodeSemaphore.WaitAsync().ConfigureAwait(false);
 			try {
+				if (GetTranscodeStatus(video, true).Options is not TranscodingOptions options) {
+					throw new InvalidOperationException($"Video {video.Name} does not need transcoding.");
+				}
+
 				// Update the current video ID and status
 				_currentVideoId = video.Id;
 
 				// Mark as in progress (progress > 0)
 				SetQueueItemProgress(video.Id, 0.01);
 
+				_logger.LogInformation("SetQueueItemProgress DONE");
+
 				await TranscodeVideo(video, options).ConfigureAwait(false);
+			}
+			catch (Exception ex) {
+				_logger.LogError("{Error}", ex.Message);
 			}
 			finally {
 				_transcodeQueue.TryRemove(video.Id, out _);
+				_transcodeSemaphore.Release();
 			}
 		}
 
@@ -399,10 +440,12 @@ namespace Jellyfin.Plugin.LQDownload {
 		}
 
 		private async Task TranscodeVideo(Video video, TranscodingOptions transcodingOptions) {
+			_logger.LogInformation("Starting transcode for video: {Id} {VideoName}", video.Id, video.Name);
+
 			var mediaSources = video.GetMediaSources(true);
 			var mediaSource = mediaSources.FirstOrDefault();
 			if (mediaSource == null) {
-				_logger.LogError("No media source found for video: {VideoName}", video.Name);
+				_logger.LogError("No media source found for video: {Id} {VideoName}", video.Id, video.Name);
 				return;
 			}
 
@@ -420,20 +463,14 @@ namespace Jellyfin.Plugin.LQDownload {
 			var threadCount = encodingOptions.EncodingThreadCount < 0 ? 0 : encodingOptions.EncodingThreadCount;
 			var outputPath = GetTranscodedFilePath(video, transcodingOptions);
 
-			// Check if tmp file exists (delete)
+			// Check if tmp file exists (abort)
 			if (File.Exists(outputPath)) {
-				File.Delete(outputPath);
-			}
-
-			// Check if final file exists (abort)
-			string finalOutputPath = outputPath.Replace(".tmp", ".mp4", StringComparison.OrdinalIgnoreCase);
-			if (File.Exists(finalOutputPath)) {
-				_logger.LogInformation("Final file already exists: {Path}. Aborting transcoding.", finalOutputPath);
+				_logger.LogWarning("Final file already exists: {Path}. Aborting transcoding.", outputPath);
 				return;
 			}
 
 			// TODO: REMOVE -t ARG AFTER TESTING
-			var arguments = $"-i \"{mediaSource.Path}\" -t 10 {hwaccelArgs} -vf scale={transcodingOptions.MaxWidth}:{transcodingOptions.MaxHeight} " +
+			var arguments = $"-i \"{mediaSource.Path}\" -t 30 {hwaccelArgs} -vf scale={transcodingOptions.MaxWidth}:{transcodingOptions.MaxHeight} " +
 											$"-b:v {transcodingOptions.TargetBitrate}k -c:v {transcodingOptions.VideoCodec} -c:a {transcodingOptions.AudioCodec} " +
 											$"-threads {threadCount} -f mp4 \"{outputPath}\"";
 
@@ -454,10 +491,10 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			_currentTranscodingProcess = process;
 
+			// All ffmpeg logs are sent to error output
 			process.ErrorDataReceived += ProcessFfMpegOutput;
 
 			try {
-				_logger.LogInformation("Starting transcoding for video: {VideoName}", video.Name);
 				process.Start();
 				process.BeginOutputReadLine();
 				process.BeginErrorReadLine();
@@ -467,16 +504,7 @@ namespace Jellyfin.Plugin.LQDownload {
 					throw new InvalidOperationException($"ffmpeg exit code {process.ExitCode}");
 				}
 
-				// Rename tmp file to mp4
-				File.Move(outputPath, finalOutputPath);
-
 				_logger.LogInformation("Transcoding completed for video: {Id} {VideoName}", video.Id, video.Name);
-
-				// Add video to be linked after ingested (movies are automatic but shows need manual linking)
-				_itemsToBeLinked.TryAdd(finalOutputPath, video.Path);
-
-				// Scan library to pick up new file
-				_libraryManager.QueueLibraryScan();
 			}
 			catch (Exception ex) {
 				_logger.LogError(ex, "Error while transcoding video {VideoName}: {Error}", video.Name, ex.Message);
@@ -543,16 +571,16 @@ namespace Jellyfin.Plugin.LQDownload {
 			}
 
 			// Construct the tags based on transcoding options
-			var sortTag = "[zzz]";
 			var resolutionTag = $"[{transcodingOptions.MaxHeight}p]";
 			var bitrateTag = $"[{transcodingOptions.TargetBitrate}kbps]";
-			var tags = $"{sortTag}{resolutionTag}{bitrateTag}";
+			var tags = $"{resolutionTag}{bitrateTag}";
 
-			// Add the " - " and tags
-			var newFileName = $"{originalFileName} - {tags}";
+			// Construct filename with " - ", tags, and extensions.
+			// Add proprietary extension so it doesn't get picked up by Jellyfin
+			var newFileName = $"{originalFileName} - {tags}.mp4.lqdownload";
 
-			// Construct the full output path, with a temporary extension initially
-			return Path.Combine(directory, $"{newFileName}.tmp");
+			// Construct the full output path
+			return Path.Combine(directory, newFileName);
 		}
 
 		private void StopCurrentTranscode() {
