@@ -1,0 +1,21 @@
+[
+	{
+		"guid": "8cdb7e71-66fc-42e1-b821-c37cab2451b6",
+		"name": "LQ Download",
+		"overview": "Lower-quality media transcoding and downloads.",
+		"description": "Allows users to download lower-quality media files with options for codec, bitrate, and resolution.",
+		"owner": "calebvetter",
+		"category": "General",
+		"imageUrl": "https://raw.githubusercontent.com/calebvetter/jellyfin-plugin-lqdownload/main/Assets/logo.png",
+		"versions": [
+			{
+				"version": "1.0.0.0",
+				"changelog": "Initial Release",
+				"targetAbi": "10.9.0.0",
+				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.0/LQDownload-1.0.0.zip",
+				"checksum": "1fc2a5a9b776b51e895a684247eb976b1bd8686cb584911bbca85e60e9572313",
+				"timestamp": "2024-12-06T00:00:00Z"
+			}
+		]
+	}
+]

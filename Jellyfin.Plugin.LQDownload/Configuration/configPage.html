@@ -19,6 +19,19 @@
 						</div>
 
 						<div class="selectContainer">
+							<label class="selectLabel" for="Codec">Codec</label>
+							<select is="emby-select" id="Codec" name="Codec" class="emby-select-withcolor emby-select">
+								<option id="optH265" value="H265">H.265 (HEVC)</option>
+								<option id="optH264" value="H264">H.264 (AVC)</option>
+							</select>
+							<div class="selectArrowContainer">
+								<div style="visibility: hidden; display: none">0</div>
+								<span class="selectArrow material-icons keyboard_arrow_down" aria-hidden="true"></span>
+							</div>
+							<div class="fieldDescription">Choose the codec for transcoding. H.265 offers better compression but requires more processing power.</div>
+						</div>
+
+						<div class="selectContainer">
 							<label class="selectLabel" for="Resolution">Max Resolution</label>
 							<select is="emby-select" id="Resolution" name="Resolution" class="emby-select-withcolor emby-select">
 								<option id="optResolution1080p" value="Resolution1080p">Resolution1080p</option>
@@ -35,7 +48,7 @@
 						<div class="inputContainer">
 							<label class="inputLabel inputLabel-float inputLabelUnfocused" for="TargetBitrate">Target Bitrate (kbps)</label>
 							<input type="number" id="TargetBitrate" pattern="[0-9]*" required="" min="0" class="emby-input" />
-							<div class="fieldDescription">Transcodes will use this bitrate. Recommended: 4000 kbps for Resolution1080p, 2500 kbps for Resolution720p, 1000 kbps for Resolution480p</div>
+							<div id="BitrateRecommendation" class="fieldDescription">Transcodes will use this bitrate. Recommended: 2500 kbps for 1080p</div>
 						</div>
 
 						<div class="inputContainer">
@@ -58,9 +71,31 @@
 				};
 
 				var DEFAULT_ENCODE_ON_IMPORT = true;
+				var DEFAULT_VIDEO_CODEC = "H265";
 				var DEFAULT_RESOLUTION = "Resolution1080p";
 				var DEFAULT_TARGET_BITRATE = 4000;
 				var DEFAULT_MAX_BITRATE = 6000;
+
+				// Recommended bitrate mapping
+				var RECOMMENDED_BITRATES = {
+					H264: {
+						Resolution1080p: 4000,
+						Resolution720p: 2500,
+						Resolution480p: 1000,
+					},
+					H265: {
+						Resolution1080p: 2500,
+						Resolution720p: 1500,
+						Resolution480p: 600,
+					},
+				};
+
+				function updateBitrateRecommendations() {
+					var videoCodec = $("#VideoCodec").val() || DEFAULT_VIDEO_CODEC;
+					var recommendation = RECOMMENDED_BITRATES[videoCodec];
+					var resolution = $("#Resolution").val() || DEFAULT_RESOLUTION;
+					$("#BitrateRecommendation").text("Transcodes will use this bitrate. Recommended: " + recommendation[resolution] + " kbps for " + resolution.replace("Resolution", ""));
+				}
 
 				$(".LQDownloadConfigPage").on("pageshow", function () {
 					Dashboard.showLoadingMsg();
@@ -69,6 +104,9 @@
 					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
 						$("#EncodeOnImport", page)
 							.prop("checked", config.EncodeOnImport != null ? config.EncodeOnImport : DEFAULT_ENCODE_ON_IMPORT)
+							.change();
+						$("#VideoCodec", page)
+							.val(config.VideoCodec || DEFAULT_VIDEO_CODEC)
 							.change();
 						$("#Resolution", page)
 							.val(config.Resolution || DEFAULT_RESOLUTION)
@@ -79,8 +117,11 @@
 						$("#MaxBitrate", page)
 							.val(config.MaxBitrate || DEFAULT_MAX_BITRATE)
 							.change();
+						updateBitrateRecommendations();
 						Dashboard.hideLoadingMsg();
 					});
+
+					$("#VideoCodec, #Resolution", page).on("change", updateBitrateRecommendations);
 				});
 
 				$(".LQDownloadConfigForm").on("submit", function (e) {
@@ -93,9 +134,10 @@
 
 					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
 						config.EncodeOnImport = $("#EncodeOnImport", form).is(":checked");
+						config.VideoCodec = $("#VideoCodec", form).val();
 						config.Resolution = $("#Resolution", form).val();
-						config.TargetBitrate = $("#TargetBitrate").val();
-						config.MaxBitrate = $("#MaxBitrate").val();
+						config.TargetBitrate = $("#TargetBitrate", form).val();
+						config.MaxBitrate = $("#MaxBitrate", form).val();
 						ApiClient.updatePluginConfiguration(LQDownloadConfig.pluginUniqueId, config).then(Dashboard.processPluginConfigurationUpdateResult);
 					});
 

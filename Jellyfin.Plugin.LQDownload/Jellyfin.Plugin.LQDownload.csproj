@@ -11,8 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="10.10.3" />
-    <PackageReference Include="Jellyfin.Model" Version="10.10.3" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.9.0" />
+    <PackageReference Include="Jellyfin.Model" Version="10.9.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,5 +31,9 @@
     <EmbeddedResource Include="Configuration\configPage.html" />
 		<EmbeddedResource Include="Web\LQDownload.js" />
   </ItemGroup>
+
+	<Target Name="PreparePlugin" AfterTargets="Build">
+		<Copy SourceFiles="..\Assets\logo.png" DestinationFolder="$(OutDir)" />
+	</Target>
 
 </Project>

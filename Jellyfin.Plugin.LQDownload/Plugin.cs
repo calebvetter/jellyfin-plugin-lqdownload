@@ -69,8 +69,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 				new EncodingHelper(applicationPaths, mediaEncoder, subtitleEncoder, configuration, configurationManager),
 				logger);
 
-		_logger.LogInformation("LQDOWNLOAD LOADING...");
-
 		// Add frontend script
 		InjectWebJs();
 	}
@@ -95,15 +93,12 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	/// Injects frontend javascript in web UI.
 	/// </summary>
 	private void InjectWebJs() {
-		_logger.LogInformation("InjectWebJs");
 		if (string.IsNullOrWhiteSpace(_applicationPaths.WebPath)) {
-			_logger.LogInformation("No web path");
 			return;
 		}
 
 		var indexFile = Path.Combine(_applicationPaths.WebPath, "index.html");
 		if (!File.Exists(indexFile)) {
-			_logger.LogInformation("No index.html");
 			return;
 		}
 
@@ -131,8 +126,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 		string scriptElement = string.Format(CultureInfo.InvariantCulture, "<script plugin=\"LQDownload\" version=\"0.0.2\" src=\"{0}/LQDownload/ClientScript\"></script>", basePath);
 
 		if (!indexContents.Contains(scriptElement, StringComparison.Ordinal)) {
-			_logger.LogInformation("Attempting to inject script code in {IndexFile}", indexFile);
-
 			// Replace old scripts
 			indexContents = Regex.Replace(indexContents, scriptReplace, string.Empty);
 
@@ -143,18 +136,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
 				try {
 					File.WriteAllText(indexFile, indexContents);
-					_logger.LogInformation("Finished injecting script code in {IndexFile}", indexFile);
 				}
 				catch (Exception e) {
 					_logger.LogError("Encountered exception while writing to {IndexFile}: {Error}", indexFile, e);
 				}
 			}
-			else {
-				_logger.LogInformation("Could not find closing body tag in {IndexFile}", indexFile);
-			}
-		}
-		else {
-			_logger.LogInformation("Found client script injected in {IndexFile}", indexFile);
 		}
 	}
 

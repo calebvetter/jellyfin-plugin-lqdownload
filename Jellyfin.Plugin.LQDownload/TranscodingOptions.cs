@@ -1,3 +1,5 @@
+using Jellyfin.Plugin.LQDownload.Configuration;
+
 namespace Jellyfin.Plugin.LQDownload {
 	/// <summary>
 	/// Represents the transcoding options for media.
@@ -26,11 +28,11 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// <summary>
 		/// Gets or sets the video codec for the transcoded video.
 		/// </summary>
-		public string VideoCodec { get; set; } = "h264";
+		public VideoCodecOptions VideoCodec { get; set; } = VideoCodecOptions.H265;
 
 		/// <summary>
 		/// Gets or sets the container format for the transcoded video.
 		/// </summary>
-		public string Container { get; set; } = "mp4";
+		public string Container { get; set; } = "mkv";
 	}
 }

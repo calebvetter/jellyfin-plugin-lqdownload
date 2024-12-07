@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -54,7 +54,7 @@ namespace Jellyfin.Plugin.LQDownload {
 	/// <summary>
 	/// Handles transcoding when new media is added.
 	/// </summary>
-	public class TranscodingHandler : IDisposable {
+	public partial class TranscodingHandler : IDisposable {
 		private readonly ILibraryManager _libraryManager;
 		private readonly IServerConfigurationManager _serverConfigurationManager;
 		private readonly EncodingHelper _encodingHelper;
@@ -62,9 +62,6 @@ namespace Jellyfin.Plugin.LQDownload {
 		private readonly ConcurrentDictionary<Guid, TranscodeQueueItem> _transcodeQueue = new();
 		private readonly CancellationTokenSource _cancellationTokenSource = new();
 		private readonly SemaphoreSlim _transcodeSemaphore = new(1, 1);
-		private readonly JsonSerializerOptions _jsonOptions = new() {
-			WriteIndented = true
-		};
 
 		private Guid _currentVideoId = Guid.Empty;
 		private TimeSpan? _currentVideoDuration;
@@ -110,8 +107,8 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// </summary>
 		public void Initialize() {
 			_libraryManager.ItemAdded += OnItemAdded;
-			_libraryManager.ItemRemoved += OnItemRemoved;
 			_libraryManager.ItemUpdated += OnItemUpdated;
+			_libraryManager.ItemRemoved += OnItemRemoved;
 
 			// Start background task to process pending items
 			Task.Run(() => ProcessQueueAsync(_cancellationTokenSource.Token));
@@ -121,8 +118,6 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// Handles the item added event and initiates transcoding if necessary.
 		/// </summary>
 		private void OnItemAdded(object? sender, ItemChangeEventArgs e) {
-			_logger.LogInformation("Item added {Id} {Name}", e.Item.Id, e.Item.Name);
-
 			// Don't do anything if not configured for encode on import
 			if (Plugin.Instance?.Configuration.EncodeOnImport != true) {
 				return;
@@ -133,23 +128,34 @@ namespace Jellyfin.Plugin.LQDownload {
 			}
 		}
 
+		/// <summary>
+		/// Handles the item updated event and initiates transcoding if necessary.
+		/// </summary>
 		private void OnItemUpdated(object? sender, ItemChangeEventArgs e) {
-			_logger.LogInformation("Item updated {Id} {Name}", e.Item.Id, e.Item.Name);
+			// TODO: figure out a way to trigger transcode for episodes on import
+			// Don't do anything if not configured for encode on import
+			if (Plugin.Instance?.Configuration.EncodeOnImport != true) {
+				return;
+			}
+
+			if (e.UpdateReason == ItemUpdateType.MetadataImport
+					&& e.Item is Video video
+					&& GetTranscodeStatus(video).Status == TranscodeStatus.CanTranscode) {
+				// _logger.LogInformation("YES WE WOULD TRANSCODE");
+				// AddToQueue(video);
+			}
 		}
 
 		private void OnItemRemoved(object? sender, ItemChangeEventArgs e) {
-			_logger.LogInformation("Item removed {Id} {Name}", e.Item.Id, e.Item.Name);
-
 			if (e.Item is Video video) {
 				// Remove from transcode queue
 				if (_transcodeQueue.TryGetValue(video.Id, out _)) {
 					if (video.Id == _currentVideoId) {
-						_logger.LogInformation("Stopping current transcoding for video: {VideoName}", video.Name);
+						_logger.LogInformation("Item removed from library. Stopping current transcoding for video: {VideoName}", video.Name);
 						StopCurrentTranscode();
 					}
 
 					_transcodeQueue.TryRemove(video.Id, out _);
-					_logger.LogInformation("Video {VideoName} removed from the transcode queue.", video.Name);
 				}
 			}
 		}
@@ -160,12 +166,7 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// <param name="video">The video to add to the queue.</param>
 		/// <returns>Successfully added to queue.</returns>
 		public bool AddToQueue(Video video) {
-			if (video == null) {
-				return false;
-			}
-
-			if (_transcodeQueue.ContainsKey(video.Id)) {
-				_logger.LogInformation("Video {VideoName} is already in the queue.", video.Name);
+			if (video == null || _transcodeQueue.ContainsKey(video.Id)) {
 				return false;
 			}
 
@@ -174,7 +175,7 @@ namespace Jellyfin.Plugin.LQDownload {
 				Video = video,
 				Progress = 0
 			});
-			_logger.LogInformation("Video {VideoName} added to the transcoding queue.", video.Name);
+			_logger.LogInformation("Video {VideoName} added to the transcode queue.", video.Name);
 
 			return true;
 		}
@@ -187,12 +188,8 @@ namespace Jellyfin.Plugin.LQDownload {
 							if (RefreshQueueItem(queueItem.Video.Id) is TranscodeQueueItem item) {
 								var (video, progress) = item;
 								if (video.Width > 0 && video.Height > 0) {
-									_logger.LogInformation("Process video {Name}", video.Name);
 									// Process the video (semaphore ensures only one at a time)
 									await TranscodeSingleVideo(queueItem).ConfigureAwait(false);
-								}
-								else {
-									_logger.LogInformation("Waiting for metadata {Name}", video.Name);
 								}
 							}
 						}
@@ -205,7 +202,7 @@ namespace Jellyfin.Plugin.LQDownload {
 					break;
 				}
 				catch (Exception ex) {
-					_logger.LogError(ex, "Error while processing added items.");
+					_logger.LogError(ex, "Error while processing transcode queue.");
 				}
 			}
 		}
@@ -230,38 +227,7 @@ namespace Jellyfin.Plugin.LQDownload {
 			};
 
 			_transcodeQueue.TryUpdate(videoId, updatedItem, queueItem);
-			_logger.LogInformation("Refreshed metadata for video {VideoName} (ID: {VideoId}).", refreshedVideo.Name, videoId);
 			return updatedItem;
-		}
-
-		private void LogVideoDetails(BaseItem video) {
-			if (video == null) {
-				_logger.LogWarning("Video object is null.");
-				return;
-			}
-
-			var videoType = video.GetType();
-			var fields = videoType.GetProperties();
-
-			var videoDetails = new Dictionary<string, object>();
-
-			foreach (var field in fields) {
-				try {
-					var value = field.GetValue(video);
-					videoDetails[field.Name] = value ?? "null";
-				}
-				catch (Exception ex) {
-					_logger.LogError(ex, "Error while getting field value for {FieldName}", field.Name);
-				}
-			}
-
-			try {
-				string json = JsonSerializer.Serialize(videoDetails, _jsonOptions);
-				_logger.LogInformation("Logging all fields and values for video object:\n{VideoDetails}", json);
-			}
-			catch (Exception ex) {
-				_logger.LogError(ex, "Error while serializing video details to JSON");
-			}
 		}
 
 		/// <summary>
@@ -305,7 +271,7 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			// Check queue
 			if (!skipQueueCheck && _transcodeQueue.TryGetValue(video.Id, out var videoStatus)) {
-				_logger.LogInformation("Video is in transcode queue.");
+				_logger.LogInformation("already in queue");
 				var status = videoStatus.Progress == 0 ? TranscodeStatus.Queued : TranscodeStatus.Transcoding;
 				return (status, videoStatus.Progress, null, null);
 			}
@@ -313,7 +279,6 @@ namespace Jellyfin.Plugin.LQDownload {
 			// Look for transcoded file
 			var lqDownloadFile = Directory.EnumerateFiles(directory, "*.lqdownload").FirstOrDefault();
 			if (lqDownloadFile != null) {
-				_logger.LogInformation("lqDownloadFile found.");
 				return (TranscodeStatus.Completed, 100, lqDownloadFile, null);
 			}
 
@@ -339,7 +304,6 @@ namespace Jellyfin.Plugin.LQDownload {
 			}
 
 			// Create transcode options
-			// TODO: get the version with the closest resolution/bitrate
 			// to the target, to minimize processing required.
 			var (targetWidth, targetHeight) = config.Resolution switch {
 				ResolutionOptions.Resolution1080p => (1920, 1080),
@@ -351,9 +315,7 @@ namespace Jellyfin.Plugin.LQDownload {
 				MaxWidth = targetWidth,
 				MaxHeight = targetHeight,
 				TargetBitrate = config.TargetBitrate,
-				AudioCodec = "aac",
-				VideoCodec = "h264",
-				Container = "mp4"
+				VideoCodec = config.VideoCodec,
 			};
 
 			return (TranscodeStatus.CanTranscode, 0, null, transcodingOptions);
@@ -363,7 +325,7 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// Check if video needs transcoding.
 		/// </summary>
 		/// <param name="video">The video to check.</param>
-		/// <returns>Null if no transcoding needed, otherwise the target bitrate for transcoding.</returns>
+		/// <returns>Whether or not the video needs transcoding .</returns>
 		private static bool VideoNeedsTranscoding(Video video) {
 			if (Plugin.Instance?.Configuration is not PluginConfiguration config) {
 				return false;
@@ -415,8 +377,6 @@ namespace Jellyfin.Plugin.LQDownload {
 				// Mark as in progress (progress > 0)
 				SetQueueItemProgress(video.Id, 0.01);
 
-				_logger.LogInformation("SetQueueItemProgress DONE");
-
 				await TranscodeVideo(video, options).ConfigureAwait(false);
 			}
 			catch (Exception ex) {
@@ -442,6 +402,14 @@ namespace Jellyfin.Plugin.LQDownload {
 		private async Task TranscodeVideo(Video video, TranscodingOptions transcodingOptions) {
 			_logger.LogInformation("Starting transcode for video: {Id} {VideoName}", video.Id, video.Name);
 
+			var outputPath = GetTranscodedFilePath(video, transcodingOptions);
+
+			// Check if tmp file exists (abort)
+			if (File.Exists(outputPath)) {
+				_logger.LogWarning("Transcoded file already exists: {Path}. Aborting transcode.", outputPath);
+				return;
+			}
+
 			var mediaSources = video.GetMediaSources(true);
 			var mediaSource = mediaSources.FirstOrDefault();
 			if (mediaSource == null) {
@@ -449,30 +417,55 @@ namespace Jellyfin.Plugin.LQDownload {
 				return;
 			}
 
+			var videoStream = video.GetDefaultVideoStream();
+
+			// Codec
+			var videoCodec = transcodingOptions.VideoCodec switch {
+				VideoCodecOptions.H265 => "hevc",
+				VideoCodecOptions.H264 => "h264",
+				_ => throw new InvalidOperationException("Unsupported codec option selected.")
+			};
+
+			// Jellyfin options
 			var encodingJobInfo = new EncodingJobInfo(TranscodingJobType.Progressive) {
 				BaseRequest = new BaseEncodingJobOptions {
 					Context = MediaBrowser.Model.Dlna.EncodingContext.Static,
 				},
-				VideoStream = video.GetDefaultVideoStream(),
+				VideoStream = videoStream,
 				MediaSource = mediaSource,
 				IsVideoRequest = true,
-				OutputVideoCodec = "h264"
+				OutputVideoCodec = videoCodec
 			};
 			var encodingOptions = _serverConfigurationManager.GetEncodingOptions();
 			var hwaccelArgs = _encodingHelper.GetInputVideoHwaccelArgs(encodingJobInfo, encodingOptions);
 			var threadCount = encodingOptions.EncodingThreadCount < 0 ? 0 : encodingOptions.EncodingThreadCount;
-			var outputPath = GetTranscodedFilePath(video, transcodingOptions);
 
-			// Check if tmp file exists (abort)
-			if (File.Exists(outputPath)) {
-				_logger.LogWarning("Final file already exists: {Path}. Aborting transcoding.", outputPath);
-				return;
+			// Process external subtitle files
+			var subtitleArgs = new StringBuilder();
+			var mapArgs = new StringBuilder();
+			var externalSubtitleIndex = 1; // External file inputs start at index 1
+			if (video.SubtitleFiles != null) {
+				foreach (var subtitleFile in video.SubtitleFiles) {
+					if (!string.IsNullOrEmpty(subtitleFile)) {
+						subtitleArgs.Append(CultureInfo.InvariantCulture, $"-i \"{subtitleFile}\" ");
+						mapArgs.Append(CultureInfo.InvariantCulture, $"-map {externalSubtitleIndex}:s ");
+						externalSubtitleIndex++;
+					}
+				}
 			}
 
-			// TODO: REMOVE -t ARG AFTER TESTING
-			var arguments = $"-i \"{mediaSource.Path}\" -t 30 {hwaccelArgs} -vf scale={transcodingOptions.MaxWidth}:{transcodingOptions.MaxHeight} " +
-											$"-b:v {transcodingOptions.TargetBitrate}k -c:v {transcodingOptions.VideoCodec} -c:a {transcodingOptions.AudioCodec} " +
-											$"-threads {threadCount} -f mp4 \"{outputPath}\"";
+			// Container format
+			var format = transcodingOptions.Container switch {
+				"mkv" => "matroska",
+				_ => "mp4"
+			};
+
+			var arguments = $"-i \"{mediaSource.Path}\" {subtitleArgs} {hwaccelArgs} " +
+											$"-vf \"scale={transcodingOptions.MaxWidth}:{transcodingOptions.MaxHeight}\" " +
+											$"-map 0:v -map 0:a -map 0:s {mapArgs} " +
+											$"-b:v {transcodingOptions.TargetBitrate}k -c:v {videoCodec} " +
+											$"-c:a {transcodingOptions.AudioCodec} -c:s copy " +
+											$"-threads {threadCount} -f {format} \"{outputPath}\"";
 
 			_logger.LogInformation("Running ffmpeg with arguments: {Arguments}", arguments);
 
@@ -504,7 +497,7 @@ namespace Jellyfin.Plugin.LQDownload {
 					throw new InvalidOperationException($"ffmpeg exit code {process.ExitCode}");
 				}
 
-				_logger.LogInformation("Transcoding completed for video: {Id} {VideoName}", video.Id, video.Name);
+				_logger.LogInformation("Transcode completed for video: {Id} {VideoName}", video.Id, video.Name);
 			}
 			catch (Exception ex) {
 				_logger.LogError(ex, "Error while transcoding video {VideoName}: {Error}", video.Name, ex.Message);
@@ -529,7 +522,7 @@ namespace Jellyfin.Plugin.LQDownload {
 			}
 
 			// If the line contains "Duration", extract the total duration of the video
-			var durationMatch = Regex.Match(args.Data, @"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})");
+			var durationMatch = DurationRegex().Match(args.Data);
 			if (durationMatch.Success) {
 				_currentVideoDuration = new TimeSpan(
 					0,
@@ -540,7 +533,7 @@ namespace Jellyfin.Plugin.LQDownload {
 			}
 
 			// Parse the progress by matching the "time" field in the ffmpeg output
-			var timeMatch = Regex.Match(args.Data, @"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})");
+			var timeMatch = TimeRegex().Match(args.Data);
 			if (timeMatch.Success && _currentVideoDuration.HasValue) {
 				var currentTime = new TimeSpan(
 						0,
@@ -555,8 +548,6 @@ namespace Jellyfin.Plugin.LQDownload {
 					// Update the transcoding progress
 					SetQueueItemProgress(_currentVideoId, _currentProgress);
 				}
-
-				_logger.LogInformation("Current progress: {Progress:0.##}%", _currentProgress);
 			}
 		}
 
@@ -577,7 +568,7 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			// Construct filename with " - ", tags, and extensions.
 			// Add proprietary extension so it doesn't get picked up by Jellyfin
-			var newFileName = $"{originalFileName} - {tags}.mp4.lqdownload";
+			var newFileName = $"{originalFileName} - {tags}.{transcodingOptions.Container}.lqdownload";
 
 			// Construct the full output path
 			return Path.Combine(directory, newFileName);
@@ -590,7 +581,6 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			try {
 				if (!_currentTranscodingProcess.HasExited) {
-					_logger.LogInformation("Stopping FFmpeg process for video ID: {VideoId}", _currentVideoId);
 					_currentTranscodingProcess.Kill();
 				}
 			}
@@ -651,5 +641,11 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			_disposed = true;
 		}
+
+		[GeneratedRegex(@"Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})")]
+		private static partial Regex DurationRegex();
+
+		[GeneratedRegex(@"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})")]
+		private static partial Regex TimeRegex();
 	}
 }

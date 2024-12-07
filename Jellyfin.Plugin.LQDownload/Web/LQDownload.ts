@@ -335,7 +335,7 @@ async function onDownload() {
 
 		// Extract filename from headers if possible
 		const contentDisposition = response.headers.get("Content-Disposition");
-		let fileName = "downloaded-file.mp4";
+		let fileName = "downloaded-file.mkv";
 		if (contentDisposition) {
 			const match = contentDisposition.match(/filename="(.+?)"/);
 			if (match) fileName = match[1];

@@ -132,7 +132,7 @@ namespace Jellyfin.Plugin.LQDownload.Api {
 		/// </returns>
 		/// <remarks>
 		/// This endpoint is protected and requires authorization.
-		/// The returned file will have the ".mp4" extension after removing ".lqdownload".
+		/// The returned file will have the ".mkv" extension after removing ".lqdownload".
 		/// </remarks>
 		[HttpGet("Download")]
 		[Authorize]
@@ -164,7 +164,7 @@ namespace Jellyfin.Plugin.LQDownload.Api {
 					string.Empty,
 					StringComparison.OrdinalIgnoreCase);
 
-			return PhysicalFile(lqDownloadFile, "video/mp4", fileName);
+			return PhysicalFile(lqDownloadFile, "video/x-matroska", fileName);
 		}
 	}
 }
