@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.LQDownload.Api;
 using Jellyfin.Plugin.LQDownload.Configuration;
@@ -28,6 +30,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	private readonly IServerConfigurationManager _serverConfigurationManager;
 	private readonly ILogger<TranscodingHandler> _logger;
 	private readonly TranscodingHandler _transcodingHandler;
+	private static string? _secretKey;
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -66,6 +69,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 		_transcodingHandler = new TranscodingHandler(
 				libraryManager,
 				serverConfigurationManager,
+				mediaEncoder,
 				new EncodingHelper(applicationPaths, mediaEncoder, subtitleEncoder, configuration, configurationManager),
 				logger);
 
@@ -90,19 +94,42 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 	public IReadOnlyDictionary<Guid, TranscodeQueueItem> TranscodeQueue => _transcodingHandler.TranscodeQueue;
 
 	/// <summary>
+	/// Gets a dynamically generated secret key for the plugin.
+	/// The key is generated once per plugin load and used for signing tokens.
+	/// </summary>
+	public static string SecretKey {
+		get {
+			if (_secretKey == null) {
+				// Generate a random 256-bit key using the recommended RandomNumberGenerator
+				var keyBytes = RandomNumberGenerator.GetBytes(32); // 256 bits
+				_secretKey = Convert.ToBase64String(keyBytes);
+			}
+
+			return _secretKey;
+		}
+	}
+
+	/// <summary>
 	/// Injects frontend javascript in web UI.
 	/// </summary>
 	private void InjectWebJs() {
+		if (Configuration.IsIndexPatched) {
+			return;
+		}
+
 		if (string.IsNullOrWhiteSpace(_applicationPaths.WebPath)) {
 			return;
 		}
 
-		var indexFile = Path.Combine(_applicationPaths.WebPath, "index.html");
-		if (!File.Exists(indexFile)) {
+		var indexFilePath = Path.Combine(_applicationPaths.WebPath, "index.html");
+		if (!File.Exists(indexFilePath)) {
 			return;
 		}
 
-		string indexContents = File.ReadAllText(indexFile);
+		Configuration.IsInDocker = IsRunningInDocker();
+
+		Configuration.IndexPath = indexFilePath;
+		string indexContents = File.ReadAllText(indexFilePath);
 
 		string basePath = string.Empty;
 
@@ -115,6 +142,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
 			if (!string.IsNullOrEmpty(confBasePath)) {
 				basePath = $"/{confBasePath}";
+				Configuration.BasePath = basePath;
 			}
 		}
 		catch (Exception e) {
@@ -123,9 +151,12 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
 		// Don't run if script already exists
 		string scriptReplace = "<script plugin=\"LQDownload\".*?></script>";
-		string scriptElement = string.Format(CultureInfo.InvariantCulture, "<script plugin=\"LQDownload\" version=\"0.0.2\" src=\"{0}/LQDownload/ClientScript\"></script>", basePath);
+		string scriptElement = string.Format(CultureInfo.InvariantCulture, "<script plugin=\"LQDownload\" src=\"{0}/LQDownload/ClientScript\"></script>", basePath);
 
-		if (!indexContents.Contains(scriptElement, StringComparison.Ordinal)) {
+		if (indexContents.Contains(scriptElement, StringComparison.Ordinal)) {
+			Configuration.IsIndexPatched = true;
+		}
+		else {
 			// Replace old scripts
 			indexContents = Regex.Replace(indexContents, scriptReplace, string.Empty);
 
@@ -135,13 +166,45 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 				indexContents = indexContents.Insert(bodyClosing, scriptElement);
 
 				try {
-					File.WriteAllText(indexFile, indexContents);
+					File.WriteAllText(indexFilePath, indexContents);
+					Configuration.IsIndexPatched = true;
 				}
 				catch (Exception e) {
-					_logger.LogError("Encountered exception while writing to {IndexFile}: {Error}", indexFile, e);
+					_logger.LogError("Encountered exception while writing to {IndexFile}: {Error}", indexFilePath, e);
 				}
 			}
 		}
+	}
+
+	private static bool IsRunningInDocker() {
+		try {
+			if (File.Exists("/.dockerenv")) {
+				return true;
+			}
+
+			string[] cgroupLines = File.ReadAllLines("/proc/1/cgroup");
+			return cgroupLines.Any(line => line.Contains("docker", StringComparison.Ordinal));
+		}
+		catch {
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// Gets the base file name for the transcode file.
+	/// </summary>
+	/// <param name="path">The file path.</param>
+	/// <returns>The beginning of the file name for the transcode file.</returns>
+	public static string GetTranscodedFileBaseName(string path) {
+		var originalFileName = Path.GetFileNameWithoutExtension(path);
+
+		// Check if the filename contains " - " and truncate it
+		var dashIndex = originalFileName.LastIndexOf(" - ", StringComparison.Ordinal);
+		if (dashIndex >= 0) {
+			originalFileName = originalFileName[..dashIndex];
+		}
+
+		return originalFileName;
 	}
 
 	/// <summary>
@@ -202,6 +265,9 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IDisposable
 
 	/// <inheritdoc />
 	public IEnumerable<PluginPageInfo> GetPages() {
+		// This will refresh whether or not it's been injected before loading the config page.
+		InjectWebJs();
+
 		return new[] {
 			new PluginPageInfo {
 				Name = Name,

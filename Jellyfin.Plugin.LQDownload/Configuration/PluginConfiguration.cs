@@ -47,6 +47,12 @@ public class PluginConfiguration : BasePluginConfiguration {
 	/// Initializes a new instance of the <see cref="PluginConfiguration"/> class.
 	/// </summary>
 	public PluginConfiguration() {
+		// Setup config
+		IsIndexPatched = false;
+		IsInDocker = false;
+		BasePath = string.Empty;
+		IndexPath = string.Empty;
+
 		// Default options
 		EncodeOnImport = false;
 		VideoCodec = VideoCodecOptions.H265;
@@ -54,6 +60,27 @@ public class PluginConfiguration : BasePluginConfiguration {
 		TargetBitrate = 2500;
 		MaxBitrate = 3500;
 	}
+
+	/// <summary>
+	/// Gets or sets a value indicating whether whether or not the index.html file has been patched
+	/// to add the client-side script tag.
+	/// </summary>
+	public bool IsIndexPatched { get; set; }
+
+	/// <summary>
+	/// Gets or sets a value indicating whether whether or not Jellyfin is running in a Docker container.
+	/// </summary>
+	public bool IsInDocker { get; set; }
+
+	/// <summary>
+	/// Gets or sets the base path for URLs.
+	/// </summary>
+	public string BasePath { get; set; }
+
+	/// <summary>
+	/// Gets or sets the file system path for the index.html file.
+	/// </summary>
+	public string IndexPath { get; set; }
 
 	/// <summary>
 	/// Gets or sets a value indicating whether new media is

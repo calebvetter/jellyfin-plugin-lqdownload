@@ -67,8 +67,6 @@ function onPageChange() {
 	currentUrl = location.href;
 	pageLoadTime = Date.now();
 
-	console.log("LQDOWNLOAD: page change", currentUrl);
-
 	// Reset item
 	currentItem = null;
 
@@ -94,7 +92,6 @@ function onPageChange() {
  */
 async function getItemTranscodeStatus() {
 	if (currentItem == null) return;
-	console.log("LQDOWNLOAD: getItemTranscodeStatus for itemId", currentItem.id);
 
 	const urlBase = location.href.split("web/#")[0];
 	const url = `${urlBase}LQDownload/ClientScript/TranscodeStatus?itemId=${encodeURIComponent(currentItem.id)}`;
@@ -117,7 +114,6 @@ async function getItemTranscodeStatus() {
 		if (urlItemId != currentItem?.id) return;
 
 		const result = await response.json();
-		console.log("LQDOWNLOAD: Transcode status result:", result);
 
 		const statusString = result.item.status;
 		const statusEnumValue = (TranscodeStatus as any)[statusString];
@@ -192,19 +188,15 @@ function updateUI() {
  * When the More button is clicked on movie/show details page
  */
 function onMoreButtonClick() {
-	console.log("LQDOWNLOAD: onMoreButtonClick");
-
 	const timeout = 1000; // 1 second timeout
 	const startTime = performance.now();
 
 	function waitForDownloadButton() {
 		const dialogs = document.querySelectorAll(".dialogContainer .dialog.opened");
 		const dialog = dialogs.length ? dialogs[dialogs.length - 1] : null;
-		console.log("LQDOWNLOAD: ", dialog);
 
 		if (dialog instanceof HTMLElement) {
 			const downloadButton = dialog.querySelector('button[data-id="download"]');
-			console.log("LQDOWNLOAD: ", downloadButton);
 			if (downloadButton instanceof HTMLElement) {
 				// This is a downloadable item.
 				// Check for pre - transcoded file and display new download button
@@ -224,11 +216,8 @@ function onMoreButtonClick() {
  * Adds transcode button to the menu, if applicable
  */
 async function addMenuButton(dialog: HTMLElement, downloadButton: HTMLElement) {
-	console.log("LQDOWNLOAD: addMenuButton");
 	// If it doesn't need transcoding, or it already is transcoding, don't add button
 	if (currentItem == null || (currentItem.status != TranscodeStatus.CanTranscode && currentItem.status != TranscodeStatus.Completed)) return;
-
-	console.log("LQDOWNLOAD: actually add menu button");
 
 	// Right-align popup
 	dialog.style.left = "unset";
@@ -272,8 +261,6 @@ async function onTranscode() {
 	// Get item ID from URL
 	if (currentItem == null) return;
 
-	console.log("LQDOWNLOAD: transcode itemId", currentItem.id);
-
 	currentItem.status = TranscodeStatus.Queued;
 
 	const urlBase = location.href.split("web/#")[0];
@@ -297,7 +284,6 @@ async function onTranscode() {
 		}
 
 		const result = await response.json();
-		console.log("LQDOWNLOAD: Transcode start result:", result);
 
 		updateUI();
 	} catch (error) {
@@ -306,22 +292,20 @@ async function onTranscode() {
 }
 
 /**
- * Download button click
+ * Download button click with token-based URL
  */
 async function onDownload() {
 	if (currentItem == null) return;
 
-	console.log("LQDOWNLOAD: Download itemId", currentItem.id);
-
 	const urlBase = location.href.split("web/#")[0];
-	const url = `${urlBase}LQDownload/ClientScript/Download?itemId=${encodeURIComponent(currentItem.id)}`;
+	const tokenUrl = `${urlBase}LQDownload/ClientScript/GetToken?itemId=${encodeURIComponent(currentItem.id)}`;
 
 	try {
 		const accessToken = getAccessToken();
 		if (!accessToken) throw "No access token";
 
-		// Make the authenticated request
-		const response = await fetch(url, {
+		// Request download URL conatining short-lived token
+		const response = await fetch(tokenUrl, {
 			method: "GET",
 			headers: {
 				Authorization: `MediaBrowser Token="${accessToken}"`,
@@ -329,26 +313,14 @@ async function onDownload() {
 		});
 
 		if (!response.ok) {
-			console.error("LQDOWNLOAD: Failed to download. HTTP status:", response.status);
+			console.error("LQDOWNLOAD: Failed to get download URL. HTTP status:", response.status);
 			return;
 		}
 
-		// Extract filename from headers if possible
-		const contentDisposition = response.headers.get("Content-Disposition");
-		let fileName = "downloaded-file.mkv";
-		if (contentDisposition) {
-			const match = contentDisposition.match(/filename="(.+?)"/);
-			if (match) fileName = match[1];
-		}
+		const { downloadUrl } = await response.json();
 
-		// Create a blob and download the file
-		const blob = await response.blob();
-		const link = document.createElement("a");
-		link.href = URL.createObjectURL(blob);
-		link.download = fileName;
-		link.click();
-
-		console.log("LQDOWNLOAD: Download successful:", fileName);
+		// Redirect the browser to the download URL
+		location.href = downloadUrl;
 	} catch (error) {
 		console.error("LQDOWNLOAD: Error during download:", error);
 	}

@@ -23,8 +23,9 @@ This Jellyfin plugin aims to provide a quick solution to generating and download
 1. In the Admin Dashboard, go to Plugins > Catelog
 2. Search for the "LQ Download" plugin (or find in the General section) and install
 3. Restart the Server
-4. Go to the Admin Dashboard again and then My Plugins
-5. Click on the LQ Download plugin and adjust settings as necessary
+4. Go to the Admin Dashboard > My Plugins > LQ Download
+5. If there's a message about additional setup, follow instructions to complete
+6. Adjust settings as desired and enjoy your downloads!
 
 ## Using the Plugin
 

@@ -10,3 +10,10 @@ artifacts
 /Directory.Build.props
 /jellyfin.ruleset
 /omnisharp.json
+
+# Build files
+/output
+/node_modules
+/build.js
+/package.json
+/pnpm-lock.yaml

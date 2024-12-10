@@ -13,6 +13,7 @@ using Jellyfin.Plugin.LQDownload.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
 using Microsoft.Extensions.Logging;
@@ -57,6 +58,7 @@ namespace Jellyfin.Plugin.LQDownload {
 	public partial class TranscodingHandler : IDisposable {
 		private readonly ILibraryManager _libraryManager;
 		private readonly IServerConfigurationManager _serverConfigurationManager;
+		private readonly IMediaEncoder _mediaEncoder;
 		private readonly EncodingHelper _encodingHelper;
 		private readonly ILogger<TranscodingHandler> _logger;
 		private readonly ConcurrentDictionary<Guid, TranscodeQueueItem> _transcodeQueue = new();
@@ -75,15 +77,18 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// </summary>
 		/// <param name="libraryManager">The library manager to manage library items in the Jellyfin library.</param>
 		/// <param name="serverConfigurationManager">The server configuration manager to retrieve transcoding-related settings.</param>
+		/// <param name="mediaEncoder">An instance of the media encoder.</param>
 		/// <param name="encodingHelper">An instance of the encoding helper to assist with media encoding operations.</param>
 		/// <param name="logger">The logger instance for logging events, errors, and other messages.</param>
 		public TranscodingHandler(
 				ILibraryManager libraryManager,
 				IServerConfigurationManager serverConfigurationManager,
+				IMediaEncoder mediaEncoder,
 				EncodingHelper encodingHelper,
 				ILogger<TranscodingHandler> logger) {
 			_libraryManager = libraryManager;
 			_serverConfigurationManager = serverConfigurationManager;
+			_mediaEncoder = mediaEncoder;
 			_encodingHelper = encodingHelper;
 			_logger = logger;
 
@@ -107,7 +112,6 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// </summary>
 		public void Initialize() {
 			_libraryManager.ItemAdded += OnItemAdded;
-			_libraryManager.ItemUpdated += OnItemUpdated;
 			_libraryManager.ItemRemoved += OnItemRemoved;
 
 			// Start background task to process pending items
@@ -128,24 +132,6 @@ namespace Jellyfin.Plugin.LQDownload {
 			}
 		}
 
-		/// <summary>
-		/// Handles the item updated event and initiates transcoding if necessary.
-		/// </summary>
-		private void OnItemUpdated(object? sender, ItemChangeEventArgs e) {
-			// TODO: figure out a way to trigger transcode for episodes on import
-			// Don't do anything if not configured for encode on import
-			if (Plugin.Instance?.Configuration.EncodeOnImport != true) {
-				return;
-			}
-
-			if (e.UpdateReason == ItemUpdateType.MetadataImport
-					&& e.Item is Video video
-					&& GetTranscodeStatus(video).Status == TranscodeStatus.CanTranscode) {
-				// _logger.LogInformation("YES WE WOULD TRANSCODE");
-				// AddToQueue(video);
-			}
-		}
-
 		private void OnItemRemoved(object? sender, ItemChangeEventArgs e) {
 			if (e.Item is Video video) {
 				// Remove from transcode queue
@@ -156,6 +142,9 @@ namespace Jellyfin.Plugin.LQDownload {
 					}
 
 					_transcodeQueue.TryRemove(video.Id, out _);
+				}
+				else {
+					// TODO: remove transcoded file if exists?
 				}
 			}
 		}
@@ -271,13 +260,13 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			// Check queue
 			if (!skipQueueCheck && _transcodeQueue.TryGetValue(video.Id, out var videoStatus)) {
-				_logger.LogInformation("already in queue");
 				var status = videoStatus.Progress == 0 ? TranscodeStatus.Queued : TranscodeStatus.Transcoding;
 				return (status, videoStatus.Progress, null, null);
 			}
 
 			// Look for transcoded file
-			var lqDownloadFile = Directory.EnumerateFiles(directory, "*.lqdownload").FirstOrDefault();
+			var fileBaseName = Plugin.GetTranscodedFileBaseName(video.Path);
+			var lqDownloadFile = Directory.EnumerateFiles(directory, $"{fileBaseName}*.lqdownload").FirstOrDefault();
 			if (lqDownloadFile != null) {
 				return (TranscodeStatus.Completed, 100, lqDownloadFile, null);
 			}
@@ -297,7 +286,7 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			// Perform check
 			foreach (var version in versions) {
-				if (!VideoNeedsTranscoding(version)) {
+				if (version.Width > 0 && version.Height > 0 && !VideoNeedsTranscoding(version)) {
 					// Video meets requirements, transcoding not needed
 					return (TranscodeStatus.NotNeeded, 0, null, null);
 				}
@@ -325,8 +314,8 @@ namespace Jellyfin.Plugin.LQDownload {
 		/// Check if video needs transcoding.
 		/// </summary>
 		/// <param name="video">The video to check.</param>
-		/// <returns>Whether or not the video needs transcoding .</returns>
-		private static bool VideoNeedsTranscoding(Video video) {
+		/// <returns>Whether or not the video needs transcoding.</returns>
+		private bool VideoNeedsTranscoding(Video video) {
 			if (Plugin.Instance?.Configuration is not PluginConfiguration config) {
 				return false;
 			}
@@ -460,36 +449,45 @@ namespace Jellyfin.Plugin.LQDownload {
 				_ => "mp4"
 			};
 
-			var arguments = $"-i \"{mediaSource.Path}\" {subtitleArgs} {hwaccelArgs} " +
+			// Bitrates
+			var bitrate = transcodingOptions.TargetBitrate;
+			var maxrate = (int)Math.Round(bitrate * 1.2);
+			var bufsize = bitrate * 2;
+
+			var arguments = $"-i \"{mediaSource.Path}\" {subtitleArgs} {hwaccelArgs} -t 60 " +
 											$"-vf \"scale={transcodingOptions.MaxWidth}:{transcodingOptions.MaxHeight}\" " +
 											$"-map 0:v -map 0:a -map 0:s {mapArgs} " +
-											$"-b:v {transcodingOptions.TargetBitrate}k -c:v {videoCodec} " +
-											$"-c:a {transcodingOptions.AudioCodec} -c:s copy " +
+											$"-b:v {bitrate}k -maxrate {maxrate}k -bufsize {bufsize}k -c:v {videoCodec} " +
+											$"-c:a {transcodingOptions.AudioCodec} -b:a 256k -c:s copy " +
 											$"-threads {threadCount} -f {format} \"{outputPath}\"";
 
 			_logger.LogInformation("Running ffmpeg with arguments: {Arguments}", arguments);
 
-			var processStartInfo = new ProcessStartInfo {
-				FileName = "ffmpeg",
-				Arguments = arguments,
-				RedirectStandardOutput = true,
-				RedirectStandardError = true,
-				UseShellExecute = false,
-				CreateNoWindow = true
-			};
+			var process = new Process {
+				StartInfo = new ProcessStartInfo {
+					WindowStyle = ProcessWindowStyle.Hidden,
+					CreateNoWindow = true,
+					UseShellExecute = false,
 
-			using var process = new Process {
-				StartInfo = processStartInfo
+					// Must consume both stdout and stderr or deadlocks may occur
+					RedirectStandardOutput = true,
+					RedirectStandardError = true,
+					RedirectStandardInput = true,
+					FileName = _mediaEncoder.EncoderPath,
+					Arguments = arguments,
+					ErrorDialog = false
+				},
+				EnableRaisingEvents = true
 			};
 
 			_currentTranscodingProcess = process;
 
 			// All ffmpeg logs are sent to error output
+			process.OutputDataReceived += ProcessFfMpegOutput;
 			process.ErrorDataReceived += ProcessFfMpegOutput;
 
 			try {
 				process.Start();
-				process.BeginOutputReadLine();
 				process.BeginErrorReadLine();
 				await process.WaitForExitAsync().ConfigureAwait(false);
 
@@ -508,6 +506,7 @@ namespace Jellyfin.Plugin.LQDownload {
 				}
 			}
 			finally {
+				process.OutputDataReceived -= ProcessFfMpegOutput;
 				process.ErrorDataReceived -= ProcessFfMpegOutput;
 				_currentVideoId = Guid.Empty;
 				_currentVideoDuration = null;
@@ -553,13 +552,7 @@ namespace Jellyfin.Plugin.LQDownload {
 
 		private static string GetTranscodedFilePath(Video video, TranscodingOptions transcodingOptions) {
 			var directory = Path.GetDirectoryName(video.Path) ?? Path.GetTempPath();
-			var originalFileName = Path.GetFileNameWithoutExtension(video.Path);
-
-			// Check if the filename contains " - " and truncate it
-			var dashIndex = originalFileName.LastIndexOf(" - ", StringComparison.Ordinal);
-			if (dashIndex >= 0) {
-				originalFileName = originalFileName[..dashIndex];
-			}
+			var fileBaseName = Plugin.GetTranscodedFileBaseName(video.Path);
 
 			// Construct the tags based on transcoding options
 			var resolutionTag = $"[{transcodingOptions.MaxHeight}p]";
@@ -568,7 +561,7 @@ namespace Jellyfin.Plugin.LQDownload {
 
 			// Construct filename with " - ", tags, and extensions.
 			// Add proprietary extension so it doesn't get picked up by Jellyfin
-			var newFileName = $"{originalFileName} - {tags}.{transcodingOptions.Container}.lqdownload";
+			var newFileName = $"{fileBaseName} - {tags}.{transcodingOptions.Container}.lqdownload";
 
 			// Construct the full output path
 			return Path.Combine(directory, newFileName);

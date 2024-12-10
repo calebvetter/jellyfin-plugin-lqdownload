@@ -8,6 +8,60 @@
 		<div data-role="page" class="page type-interior pluginConfigurationPage LQDownloadConfigPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
 			<div data-role="content">
 				<div class="content-primary">
+					<h1>LQ Download</h1>
+					<p>Lower-quality media transcoding and downloads.</p>
+
+					<div class="lqdownload-patch-success" style="display: none; align-items: center; gap: 0.5em; max-width: 54em; margin-bottom: 1.8em; padding: 0.5em 1em; border-radius: 0.2em; border: 1px solid #4ade80; background: #dcfce7; color: #15803d">
+						<div class="material-icons check_circle"></div>
+						<p>Setup complete</p>
+					</div>
+
+					<div class="lqdownload-patch-error" style="display: none; max-width: 54em; margin-bottom: 1.8em; padding: 0.5em 1em; border-radius: 0.2em; border: 1px solid #f87171; background: #fee2e2; color: #b91c1c">
+						<div style="display: flex; align-items: center; gap: 0.5em">
+							<div class="material-icons error"></div>
+							<p style="display: flex; align-items: baseline; gap: 0.2em; font-weight: 700">Additional setup required!</p>
+						</div>
+						<div>
+							<ol>
+								<li style="margin: 1em 0">
+									SSH into your server. <button class="lqdownload-docker-button" style="border: none; background: transparent; color: #b91c1c; text-decoration: underline; cursor: pointer">Using Docker?</button>
+									<br />
+									<div class="lqdownload-docker-instructions" style="display: none">
+										<p style="margin: 0.5em 0">Use the following command to access the Docker container's terminal:</p>
+										<div style="display: flex; align-items: flex-start; margin-top: 0.5em">
+											<button class="lqdownload-copy-button material-icons content_copy" style="border: none; background: transparent; font-size: 1.2em; cursor: pointer"></button>
+											<div style="font-family: 'Courier New', Courier, monospace; font-weight: 700">docker exec -it &lt;container_name_or_id&gt; /bin/bash</div>
+										</div>
+									</div>
+								</li>
+								<li style="margin: 1em 0">
+									Run the following command in the terminal:
+									<br />
+									<div style="display: flex; align-items: flex-start; margin-top: 0.5em">
+										<button class="lqdownload-copy-button material-icons content_copy" style="border: none; background: transparent; font-size: 1.2em; cursor: pointer"></button>
+										<div class="lqdownload-patch-command" style="font-family: 'Courier New', Courier, monospace; font-weight: 700"></div>
+									</div>
+								</li>
+							</ol>
+						</div>
+						<div style="display: flex; justify-content: flex-end">
+							<button class="lqdownload-learn-more-button" style="border: none; background: transparent; text-decoration: underline; cursor: pointer">Learn more</button>
+						</div>
+						<div class="lqdownload-learn-more" style="display: none">
+							<p>LQ Download relies on client-side javascript to function. The following script tag needs to be added to the main <span style="font-family: 'Courier New', Courier, monospace; font-weight: 700">index.html</span> file, but the plugin was unable to automatically add it.</p>
+							<div style="display: flex; align-items: flex-start">
+								<button class="lqdownload-copy-button material-icons content_copy" style="border: none; background: transparent; font-size: 1.2em; cursor: pointer"></button>
+								<div class="lqdownload-patch-script" style="font-family: 'Courier New', Courier, monospace; font-weight: 700"></div>
+							</div>
+							<p>Explaination of the command in step 2:</p>
+							<ol>
+								<li>The <span style="font-family: 'Courier New', Courier, monospace; font-weight: 700">grep</span> part searches for the script tag in the <span style="font-family: 'Courier New', Courier, monospace; font-weight: 700">index.html</span> file.</li>
+								<li>If found, nothing after the <span style="font-family: 'Courier New', Courier, monospace; font-weight: 700">||</span> runs.</li>
+								<li>Otherwise, the <span style="font-family: 'Courier New', Courier, monospace; font-weight: 700">sed</span> part searches for the <span style="font-family: 'Courier New', Courier, monospace; font-weight: 700">&lt;/body&gt;</span> close tag and replaces it with the script tag, and adds the <span style="font-family: 'Courier New', Courier, monospace; font-weight: 700">&lt;/body&gt;</span> close tag again.</li>
+							</ol>
+						</div>
+					</div>
+
 					<form class="LQDownloadConfigForm">
 						<div class="checkboxContainer checkboxContainer-withDescription">
 							<label class="emby-checkbox-label" for="EncodeOnImport">
@@ -75,6 +129,13 @@
 				var DEFAULT_RESOLUTION = "Resolution1080p";
 				var DEFAULT_TARGET_BITRATE = 4000;
 				var DEFAULT_MAX_BITRATE = 6000;
+				var PATCH_SCRIPT = `<script plugin="LQDownload" src="{{{basePath}}}/LQDownload/ClientScript"><\/script>`;
+				var PATCH_COMMAND = `grep -q '<script plugin="LQDownload".*?><\/script>' {{{indexPath}}} || {{{sudo}}} sed -i 's|</body>|{{{patchScript}}}</body>|' {{{indexPath}}}`;
+
+				var isIndexPatched = false;
+				var isInDocker = false;
+				var basePath = "";
+				var indexPath = "";
 
 				// Recommended bitrate mapping
 				var RECOMMENDED_BITRATES = {
@@ -90,6 +151,64 @@
 					},
 				};
 
+				function updateScriptPatch() {
+					var patchScript = PATCH_SCRIPT.replace("{{{basePath}}}", basePath);
+					var patchCommand = PATCH_COMMAND.replaceAll("{{{indexPath}}}", indexPath)
+						.replace("{{{patchScript}}}", patchScript)
+						.replace("{{{sudo}}}", isInDocker ? "" : "sudo");
+					$(".lqdownload-patch-script").text(patchScript);
+					$(".lqdownload-patch-command").text(patchCommand);
+
+					if (isIndexPatched) {
+						$(".lqdownload-patch-error").hide();
+						$(".lqdownload-patch-success").css("display", "flex");
+					} else {
+						$(".lqdownload-patch-success").hide();
+						$(".lqdownload-patch-error").show();
+					}
+				}
+
+				function copyCommand(e) {
+					e.preventDefault();
+					const buttonEl = e.target;
+					const textToCopy = $(buttonEl).next().text().trim();
+
+					navigator.clipboard
+						.writeText(textToCopy)
+						.then(() => {
+							const popup = $("<div>").text("Copied").css({
+								position: "absolute",
+								background: "#000",
+								color: "#fff",
+								padding: "5px 10px",
+								borderRadius: "5px",
+								fontSize: "12px",
+								zIndex: 1000,
+								display: "none",
+							});
+
+							$("body").append(popup);
+
+							const buttonOffset = $(buttonEl).offset();
+							const buttonWidth = $(buttonEl).outerWidth();
+							const popupHeight = popup.outerHeight();
+							popup.css({
+								left: buttonOffset.left + buttonWidth / 2 - popup.outerWidth() / 2,
+								top: buttonOffset.top - popupHeight - 10, // 10px above the button
+							});
+
+							popup
+								.fadeIn(200)
+								.delay(1000)
+								.fadeOut(200, function () {
+									$(this).remove();
+								});
+						})
+						.catch(() => {
+							console.error("Failed to copy text.");
+						});
+				}
+
 				function updateBitrateRecommendations() {
 					var videoCodec = $("#VideoCodec").val() || DEFAULT_VIDEO_CODEC;
 					var recommendation = RECOMMENDED_BITRATES[videoCodec];
@@ -102,6 +221,12 @@
 					var page = this;
 
 					ApiClient.getPluginConfiguration(LQDownloadConfig.pluginUniqueId).then(function (config) {
+						isIndexPatched = config.IsIndexPatched;
+						isInDocker = config.IsInDocker;
+						basePath = config.BasePath;
+						indexPath = config.IndexPath;
+						updateScriptPatch();
+
 						$("#EncodeOnImport", page)
 							.prop("checked", config.EncodeOnImport != null ? config.EncodeOnImport : DEFAULT_ENCODE_ON_IMPORT)
 							.change();
@@ -117,6 +242,20 @@
 						$("#MaxBitrate", page)
 							.val(config.MaxBitrate || DEFAULT_MAX_BITRATE)
 							.change();
+
+						$(".lqdownload-copy-button").click(copyCommand);
+
+						if (isInDocker) $(".lqdownload-docker-instructions").show();
+						$(".lqdownload-docker-button", page).click((e) => {
+							e.preventDefault();
+							$(".lqdownload-docker-instructions").slideToggle(200);
+						});
+
+						$(".lqdownload-learn-more-button", page).click((e) => {
+							e.preventDefault();
+							$(".lqdownload-learn-more").slideToggle(200);
+						});
+
 						updateBitrateRecommendations();
 						Dashboard.hideLoadingMsg();
 					});

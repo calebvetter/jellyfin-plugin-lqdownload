@@ -274,45 +274,34 @@ function onTranscode() {
     });
 }
 /**
- * Download button click
+ * Download button click with token-based URL
  */
 function onDownload() {
     return __awaiter(this, void 0, void 0, function* () {
         if (currentItem == null)
             return;
-        console.log("LQDOWNLOAD: Download itemId", currentItem.id);
+        console.log("LQDOWNLOAD: Requesting download token for itemId", currentItem.id);
         const urlBase = location.href.split("web/#")[0];
-        const url = `${urlBase}LQDownload/ClientScript/Download?itemId=${encodeURIComponent(currentItem.id)}`;
+        const tokenUrl = `${urlBase}LQDownload/ClientScript/GetToken?itemId=${encodeURIComponent(currentItem.id)}`;
         try {
             const accessToken = getAccessToken();
             if (!accessToken)
                 throw "No access token";
-            // Make the authenticated request
-            const response = yield fetch(url, {
+            // Request download URL conatining short-lived token
+            const response = yield fetch(tokenUrl, {
                 method: "GET",
                 headers: {
                     Authorization: `MediaBrowser Token="${accessToken}"`,
                 },
             });
             if (!response.ok) {
-                console.error("LQDOWNLOAD: Failed to download. HTTP status:", response.status);
+                console.error("LQDOWNLOAD: Failed to get download URL. HTTP status:", response.status);
                 return;
             }
-            // Extract filename from headers if possible
-            const contentDisposition = response.headers.get("Content-Disposition");
-            let fileName = "downloaded-file.mkv";
-            if (contentDisposition) {
-                const match = contentDisposition.match(/filename="(.+?)"/);
-                if (match)
-                    fileName = match[1];
-            }
-            // Create a blob and download the file
-            const blob = yield response.blob();
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            link.download = fileName;
-            link.click();
-            console.log("LQDOWNLOAD: Download successful:", fileName);
+            const { downloadUrl } = yield response.json();
+            // Redirect the browser to the download URL
+            location.href = downloadUrl;
+            console.log("LQDOWNLOAD: Redirected to download URL");
         }
         catch (error) {
             console.error("LQDOWNLOAD: Error during download:", error);
