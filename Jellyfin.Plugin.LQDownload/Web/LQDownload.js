@@ -56,7 +56,6 @@ function onPageChange() {
         return;
     currentUrl = location.href;
     pageLoadTime = Date.now();
-    console.log("LQDOWNLOAD: page change", currentUrl);
     // Reset item
     currentItem = null;
     // Stop if not on details page
@@ -82,7 +81,6 @@ function getItemTranscodeStatus() {
     return __awaiter(this, void 0, void 0, function* () {
         if (currentItem == null)
             return;
-        console.log("LQDOWNLOAD: getItemTranscodeStatus for itemId", currentItem.id);
         const urlBase = location.href.split("web/#")[0];
         const url = `${urlBase}LQDownload/ClientScript/TranscodeStatus?itemId=${encodeURIComponent(currentItem.id)}`;
         try {
@@ -101,7 +99,6 @@ function getItemTranscodeStatus() {
             if (urlItemId != (currentItem === null || currentItem === void 0 ? void 0 : currentItem.id))
                 return;
             const result = yield response.json();
-            console.log("LQDOWNLOAD: Transcode status result:", result);
             const statusString = result.item.status;
             const statusEnumValue = TranscodeStatus[statusString];
             if (statusEnumValue !== undefined) {
@@ -174,16 +171,13 @@ function updateUI() {
  * When the More button is clicked on movie/show details page
  */
 function onMoreButtonClick() {
-    console.log("LQDOWNLOAD: onMoreButtonClick");
     const timeout = 1000; // 1 second timeout
     const startTime = performance.now();
     function waitForDownloadButton() {
         const dialogs = document.querySelectorAll(".dialogContainer .dialog.opened");
         const dialog = dialogs.length ? dialogs[dialogs.length - 1] : null;
-        console.log("LQDOWNLOAD: ", dialog);
         if (dialog instanceof HTMLElement) {
             const downloadButton = dialog.querySelector('button[data-id="download"]');
-            console.log("LQDOWNLOAD: ", downloadButton);
             if (downloadButton instanceof HTMLElement) {
                 // This is a downloadable item.
                 // Check for pre - transcoded file and display new download button
@@ -202,11 +196,9 @@ function onMoreButtonClick() {
  */
 function addMenuButton(dialog, downloadButton) {
     return __awaiter(this, void 0, void 0, function* () {
-        console.log("LQDOWNLOAD: addMenuButton");
         // If it doesn't need transcoding, or it already is transcoding, don't add button
         if (currentItem == null || (currentItem.status != TranscodeStatus.CanTranscode && currentItem.status != TranscodeStatus.Completed))
             return;
-        console.log("LQDOWNLOAD: actually add menu button");
         // Right-align popup
         dialog.style.left = "unset";
         dialog.style.right = "10px";
@@ -245,7 +237,6 @@ function onTranscode() {
         // Get item ID from URL
         if (currentItem == null)
             return;
-        console.log("LQDOWNLOAD: transcode itemId", currentItem.id);
         currentItem.status = TranscodeStatus.Queued;
         const urlBase = location.href.split("web/#")[0];
         const url = `${urlBase}LQDownload/ClientScript/Transcode?itemId=${encodeURIComponent(currentItem.id)}`;
@@ -265,7 +256,6 @@ function onTranscode() {
                 return;
             }
             const result = yield response.json();
-            console.log("LQDOWNLOAD: Transcode start result:", result);
             updateUI();
         }
         catch (error) {
@@ -280,7 +270,6 @@ function onDownload() {
     return __awaiter(this, void 0, void 0, function* () {
         if (currentItem == null)
             return;
-        console.log("LQDOWNLOAD: Requesting download token for itemId", currentItem.id);
         const urlBase = location.href.split("web/#")[0];
         const tokenUrl = `${urlBase}LQDownload/ClientScript/GetToken?itemId=${encodeURIComponent(currentItem.id)}`;
         try {
@@ -301,7 +290,6 @@ function onDownload() {
             const { downloadUrl } = yield response.json();
             // Redirect the browser to the download URL
             location.href = downloadUrl;
-            console.log("LQDOWNLOAD: Redirected to download URL");
         }
         catch (error) {
             console.error("LQDOWNLOAD: Error during download:", error);

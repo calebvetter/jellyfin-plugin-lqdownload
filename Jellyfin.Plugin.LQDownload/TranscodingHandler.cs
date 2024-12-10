@@ -454,7 +454,7 @@ namespace Jellyfin.Plugin.LQDownload {
 			var maxrate = (int)Math.Round(bitrate * 1.2);
 			var bufsize = bitrate * 2;
 
-			var arguments = $"-i \"{mediaSource.Path}\" {subtitleArgs} {hwaccelArgs} -t 60 " +
+			var arguments = $"-i \"{mediaSource.Path}\" {subtitleArgs} {hwaccelArgs} " +
 											$"-vf \"scale={transcodingOptions.MaxWidth}:{transcodingOptions.MaxHeight}\" " +
 											$"-map 0:v -map 0:a -map 0:s {mapArgs} " +
 											$"-b:v {bitrate}k -maxrate {maxrate}k -bufsize {bufsize}k -c:v {videoCodec} " +
