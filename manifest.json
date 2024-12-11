@@ -9,28 +9,12 @@
 		"imageUrl": "https://raw.githubusercontent.com/calebvetter/jellyfin-plugin-lqdownload/main/Assets/logo.png",
 		"versions": [
 			{
-				"version": "1.0.0.0",
-				"changelog": "Initial Release",
+				"version": "1.0.4.0",
+				"changelog": "Fix codec selection",
 				"targetAbi": "10.9.0.0",
-				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.0/LQDownload-1.0.0.zip",
-				"checksum": "E4E45DEE5C43ED60BEDD9DEA41A46125",
-				"timestamp": "2024-12-06T00:00:00Z"
-			},
-			{
-				"version": "1.0.1.0",
-				"changelog": "Fix plugin image",
-				"targetAbi": "10.9.0.0",
-				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.1/LQDownload-1.0.1.zip",
-				"checksum": "4D7CB192BACEB61D023533E967E7773F",
-				"timestamp": "2024-12-06T00:00:00Z"
-			},
-			{
-				"version": "1.0.2.0",
-				"changelog": "Various fixes",
-				"targetAbi": "10.9.0.0",
-				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.2/LQDownload-1.0.2.zip",
-				"checksum": "6FFD54E7463AC2DF759E34A7A1B3D5F5",
-				"timestamp": "2024-12-09T00:00:00Z"
+				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.4/LQDownload-1.0.4.zip",
+				"checksum": "3F726E76300D1422FF2DC2DEC5E3567A",
+				"timestamp": "2024-12-11T00:00:00Z"
 			},
 			{
 				"version": "1.0.3.0",
@@ -41,12 +25,28 @@
 				"timestamp": "2024-12-10T00:00:00Z"
 			},
 			{
-				"version": "1.0.4.0",
-				"changelog": "Fix codec selection",
+				"version": "1.0.2.0",
+				"changelog": "Various fixes",
 				"targetAbi": "10.9.0.0",
-				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.4/LQDownload-1.0.4.zip",
-				"checksum": "3F726E76300D1422FF2DC2DEC5E3567A",
-				"timestamp": "2024-12-11T00:00:00Z"
+				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.2/LQDownload-1.0.2.zip",
+				"checksum": "6FFD54E7463AC2DF759E34A7A1B3D5F5",
+				"timestamp": "2024-12-09T00:00:00Z"
+			},
+			{
+				"version": "1.0.1.0",
+				"changelog": "Fix plugin image",
+				"targetAbi": "10.9.0.0",
+				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.1/LQDownload-1.0.1.zip",
+				"checksum": "4D7CB192BACEB61D023533E967E7773F",
+				"timestamp": "2024-12-06T00:00:00Z"
+			},
+			{
+				"version": "1.0.0.0",
+				"changelog": "Initial Release",
+				"targetAbi": "10.9.0.0",
+				"sourceUrl": "https://github.com/calebvetter/jellyfin-plugin-lqdownload/releases/download/v1.0.0/LQDownload-1.0.0.zip",
+				"checksum": "E4E45DEE5C43ED60BEDD9DEA41A46125",
+				"timestamp": "2024-12-06T00:00:00Z"
 			}
 		]
 	}
